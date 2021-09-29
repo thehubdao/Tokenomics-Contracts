@@ -3,3 +3,4 @@ package-lock.json
 *.zip
 migrations/
 *.json
+truffle-config.js
