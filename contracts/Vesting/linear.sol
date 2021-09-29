@@ -7,7 +7,7 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
  the amount of the balance a user can retrieve is linearly dependent on 
  the fraction of the duration that has already passed since startTime.
 */
-contract VestingWallet {
+contract LinearVesting {
 
   IERC20 constant private token = IERC20(address(0));
   uint256 public startTime;

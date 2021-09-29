@@ -3,9 +3,7 @@ const { MAX_UINT256 } = require('@openzeppelin/test-helpers/src/constants');
 const assert = require('assert');
 const _IFO = artifacts.require('IFOACD');
 const _ERC20 = artifacts.require('mockERC20');
-const _ERC206 = artifacts.require('mockERC206')
-
-const cmil = 100000;
+const _ERC206 = artifacts.require('mockERC206');
 
 contract('IFOACD', ([alice, bob, admin]) => {
 	beforeEach(async () => {
@@ -49,7 +47,7 @@ contract('IFOACD', ([alice, bob, admin]) => {
 		await this.IFO.harvestPool(1, { from: bob });
 		await this.IFO.harvestPool(0, { from: bob });
 		await this.IFO.harvestPool(1, { from: alice });
-<
+
 		assert.equal((await (await this.IFO.viewUserAmount(bob, [0, 1])).toString()), [0,0].toString());
 		assert.equal(await this.DIE.balanceOf(bob), 422222);
 		assert.equal(await this.DIE.balanceOf(alice), 277777);

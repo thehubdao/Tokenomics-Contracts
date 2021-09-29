@@ -9,7 +9,7 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
  => retrievableAmount = (timePassed/Duration)^2 * totalAmount
  => 50 percent of time passed => 25% of total amount is retrievable
 */
-contract VestingWallet {
+contract QuadraticVesting {
 
   IERC20 constant private token = IERC20(address(0));
   uint256 public startTime;
