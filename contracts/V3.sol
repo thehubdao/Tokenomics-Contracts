@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 import '@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol';
-import '@thedac-space/thedap-contracts-preaudit/contracts/Library+ParentContracts/Whitelist.sol';
+import '../Whitelist.sol';
 // removed safeMath, see https://github.com/OpenZeppelin/openzeppelin-contracts/issues/2465
 
 pragma solidity "0.8.0";
@@ -18,7 +18,7 @@ contract IFOV3 is Whitelist{
     IERC20 public offeringToken;
 
     // Number of pools
-    uint8 public constant numberPools = 2;
+    uint8 public constant numberPools = 3;
 
     // The block number when IFO starts
     uint256 public startBlock;
@@ -147,7 +147,7 @@ contract IFOV3 is Whitelist{
      */
     function harvestPool(uint8 _pid) external {
         // buffer time between end of deposit and start of harvest for admin to whitelist (~7 hours)
-        require(block.number > endBlock + HarvestDelay, "Too early to harvest");
+        require(block.number > endBlock, "Too early to harvest");
 
         // Checks whether pool id is valid
         require(_pid < numberPools, "Non valid pool id");
@@ -156,7 +156,7 @@ contract IFOV3 is Whitelist{
         require(amountPool[msg.sender][_pid] > 0, "Did not participate");
 
         // check if not whitelisted and whitelist active, then refund full amount
-        if(whitelistedMap[msg.sender] != 1 && WhitelistStatus == true){
+        if(whitelistedMap[msg.sender] != 1 && whitelistStatus == true){
           uint amount = amountPool[msg.sender][_pid];
           amountPool[msg.sender][_pid] = 0;
           lpToken.safeTransfer(address(msg.sender), amount);
@@ -434,11 +434,6 @@ contract IFOV3 is Whitelist{
         } else {
             return 0;
         }
-    }
-
-    function SetHarvestDelay(uint _HarvestDelay) external onlyOwner {
-        require( _HarvestDelay < 90000, 'max delay is 90000 blocks');
-        HarvestDelay = _HarvestDelay;
     }
     fallback() external payable{}
 }

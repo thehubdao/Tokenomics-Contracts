@@ -18,7 +18,7 @@ contract IFOACD is Ownable{
     IERC20 public offeringToken;
 
     // Number of pools
-    uint8 private constant numberPools = 2;
+    uint8 private constant numberPools = 3;
 
     // The block number when IFO starts
     uint256 public startBlock;
@@ -61,7 +61,7 @@ contract IFOACD is Ownable{
     event NewStartAndEndBlocks(uint256 startBlock, uint256 endBlock);
 
     // Event when parameters are set for one of the pools
-    event PoolParametersSet(uint256 offeringAmountPool, uint priceA_, uint8 pid);
+    event PoolParametersSet(uint256 offeringAmountPool, uint priceA_, uint priceB_, uint8 pid);
 
     // modifier to prevent admin from calling critical set up functions before 3 days after harvest time
 
@@ -79,13 +79,21 @@ contract IFOACD is Ownable{
 
     constructor(
         IERC20 _lpToken,
-        IERC20 _offeringToken
+        IERC20 _offeringToken,
+        uint256 _offeringAmount,
+        uint256 _price,
+        uint256 _startBlock,
+        uint256 _endBlock,
+        address _owner
     ) {
         require(_lpToken.totalSupply() >= 0);
         require(_offeringToken.totalSupply() >= 0);
         require(_lpToken != _offeringToken, "Tokens must be be different");
         lpToken = _lpToken;
         offeringToken = _offeringToken;
+        setPool(_offeringAmount, _price, 0, 0);
+        updateStartAndEndBlocks(_startBlock, _endBlock);
+        transferOwnership(_owner);
     }
 
     /**
@@ -144,7 +152,7 @@ contract IFOACD is Ownable{
         // Checks whether the user has participated
         require(amountPool[msg.sender][_pid] > 0, "Did not participate");
 
-        uint256 offeringTokenAmount = _calculateOfferingAmountPool(
+        uint256 offeringTokenAmount = _calculateOfferingAndRefundingAmountsPool(
             msg.sender,
             _pid
         );
@@ -181,15 +189,9 @@ contract IFOACD is Ownable{
         emit AdminWithdraw(_lpAmount, _offerAmount, _weiAmount);
     }
 
-    function adminWithdraw() external onlyOwner {
-        uint256 amount = lpToken.balanceOf(address(this));
-        lpToken.transfer(msg.sender, amount);
-        emit AdminWithdraw(amount, 0, 0);
-    }
-
     /**
      * @notice It allows the admin to recover wrong tokens sent to the contract
-     * @param _tokenAddress: the address of the token to withdraw (18 decimals)
+     * @param _tokenAddress: the address of the token to withdraw
      * @param _tokenAmount: the number of token amount to withdraw
      * @dev This function is only callable by admin.
      */
@@ -208,29 +210,22 @@ contract IFOACD is Ownable{
      * @param _pid: pool id
      * @dev This function is only callable by admin.
      * @notice can not offer more than the current balance of the contract
-     * @notice 
      */
     function setPool(
         uint256 _offeringAmountPool,
         uint256 _priceA,
+        uint256 _priceB,
         uint8 _pid
-    ) external  onlyOwner adminTimeLock {
+    ) public  onlyOwner adminTimeLock {
 
         require(_pid < numberPools, "Pool does not exist");
 
         _poolInformation[_pid].offeringAmountPool = _offeringAmountPool;
         _poolInformation[_pid].priceA = _priceA;
+        _poolInformation[_pid].priceB = _priceB;
 
-        //calculate the current total OfferingAmount
-        uint sum = 0;
-        for (uint j = 0; j < numberPools; j++){
-            sum += _poolInformation[j].offeringAmountPool;
-        }
-        //require that all offered tokens are in the contract
-        require(sum <= offeringToken.balanceOf(address(this)),
-        'cant offer more than balance');
 
-        emit PoolParametersSet(_offeringAmountPool, _priceA, _pid);
+        emit PoolParametersSet(_offeringAmountPool, _priceA, _priceB, _pid);
     }
 
     /**
@@ -240,7 +235,7 @@ contract IFOACD is Ownable{
      * @notice 
      * @notice automatically resets the totalAmount in each Pool to 0
      */
-    function updateStartAndEndBlocks(uint256 _startBlock, uint256 _endBlock) external onlyOwner adminTimeLock  {
+    function updateStartAndEndBlocks(uint256 _startBlock, uint256 _endBlock) public onlyOwner adminTimeLock  {
         require(_startBlock < _endBlock, "New startBlock must be lower than new endBlock");
         require(block.number < _startBlock, "New startBlock must be higher than current block");
       //reset the totalAmount in each pool, when initiating new start and end blocks
@@ -319,21 +314,21 @@ contract IFOACD is Ownable{
      * @param _user: user address
      * @param _pids: array of pids
      */
-    function viewUserOfferingAmountsForPools(address _user, uint8[] calldata _pids)
+    function viewUserOfferingAndRefundingAmountsForPools(address _user, uint8[] calldata _pids)
         external
         view
-        returns (uint256[] memory)
+        returns (uint256[2][] memory)
     {
-        uint256[] memory amountPools = new uint256[](_pids.length);
+        uint256[2][] memory amountPools = new uint256[2][](_pids.length);
 
         for (uint8 i = 0; i < _pids.length; i++) {
           uint256 userOfferingAmountPool;
 
           if (_poolInformation[_pids[i]].offeringAmountPool > 0) {
-            userOfferingAmountPool = _calculateOfferingAmountPool(_user, _pids[i]);
+            userOfferingAmountPool = _calculateOfferingAndRefundingAmountsPool(_user, _pids[i]);
           }
 
-          amountPools[i] = userOfferingAmountPool;
+          amountPools[i] = [userOfferingAmountPool, 0];
         }
         return amountPools;
     }
@@ -344,7 +339,7 @@ contract IFOACD is Ownable{
      * @param _pid: pool id
      * @return {uint256, uint256} It returns the offering amount, the refunding amount (in LP tokens)
      */
-    function _calculateOfferingAmountPool(address _user, uint8 _pid)
+    function _calculateOfferingAndRefundingAmountsPool(address _user, uint8 _pid)
       internal
       view
       returns (uint256)
@@ -368,6 +363,7 @@ contract IFOACD is Ownable{
           return _getUserAllocationPool(_user, _pid) * _poolInformation[1].offeringAmountPool / 1e12;
         }
       }
+      return 0;
     }
 
     /**
