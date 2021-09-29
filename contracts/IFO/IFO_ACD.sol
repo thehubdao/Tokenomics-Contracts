@@ -66,7 +66,7 @@ contract IFOACD is Ownable{
     // modifier to prevent admin from calling critical set up functions before 3 days after harvest time
 
     modifier adminTimeLock() {
-        require(block.number >= endBlock + 21000, 'admin must wait');
+        require(block.number >= endBlock + 20, 'admin must wait');
         _;
     }
 

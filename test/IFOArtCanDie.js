@@ -3,7 +3,7 @@ const { MAX_UINT256 } = require('@openzeppelin/test-helpers/src/constants');
 const assert = require('assert');
 const _IFO = artifacts.require('IFOACD');
 const _ERC20 = artifacts.require('mockERC20');
-const _ERC206 = artifacts.require('mockERC206');
+const _ERC206 = artifacts.require('mockERC209');
 
 contract('IFOACD', ([alice, bob, admin]) => {
 	beforeEach(async () => {
@@ -11,11 +11,8 @@ contract('IFOACD', ([alice, bob, admin]) => {
 		this.USD = await _ERC206.new('USDCoin', 'USD', 1000000, { from: admin });
 		this.USD.transfer(alice, 500000, { from: admin });
 		this.USD.transfer(bob, 500000, { from: admin });
-		this.IFO = await _IFO.new(await this.USD.address, await this.DIE.address, { from: admin });
+		this.IFO = await _IFO.new(await this.USD.address, await this.DIE.address, 1000000, 2000, 20, 50, admin, { from: admin });
 		await this.DIE.transfer(await this.IFO.address, 1000000, { from: admin });
-
-		await this.IFO.setPool(500000, 2, 0, { from: admin });
-		await this.IFO.setPool(500000, 2, 1, { from: admin });
 
 		await this.USD.approve(await this.IFO.address, MAX_UINT256, { from: bob });
 		await this.USD.approve(await this.IFO.address, MAX_UINT256, { from: alice });
@@ -23,13 +20,16 @@ contract('IFOACD', ([alice, bob, admin]) => {
 	});
 
 	it('should deposit and harvest correctly', async () => {
-		await this.IFO.updateStartAndEndBlocks(20, 50, { from: admin });
 		const end = 50;
 		const start = 20;
 		await expectRevert(
 			this.IFO.depositPool(100000, 0, { from: bob }),
 			"Too early",
 		);
+		await expectRevert(
+			this.IFO.setPool(100, 1, 1, 0, { from: admin }),
+			"admin must wait",
+		)
 		await time.advanceBlockTo(start);
 		await this.IFO.depositPool(100000, 0, { from: bob });
 		await this.IFO.depositPool(400000, 1, { from: bob });
@@ -53,11 +53,18 @@ contract('IFOACD', ([alice, bob, admin]) => {
 		assert.equal(await this.DIE.balanceOf(alice), 277777);
 
 		await expectRevert(
-			this.IFO.adminWithdraw({ from: bob }),
-			'Ownable: caller is not the owner',
+			this.IFO.finalWithdraw(100, 100, 100, { from: admin }),
+			"admin must wait",
 		);
 
-		await this.IFO.adminWithdraw({ from: admin });
+		await time.advanceBlockTo(end + 21);
+
+		await expectRevert(
+			this.IFO.finalWithdraw(100, 100, 100, { from: bob }),
+			"Ownable: caller is not the owner",
+		);
+
+		await this.IFO.finalWithdraw(1000000, 1, 0, { from: admin });
 		await this.IFO.finalWithdraw(0, 1, 0, { from: admin });
 
 		assert.equal((await this.USD.balanceOf(admin)).toString(), '1000000');
