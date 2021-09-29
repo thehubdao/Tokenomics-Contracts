@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 import '@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol';
-import '../Whitelist.sol';
+import './Whitelist.sol';
 // removed safeMath, see https://github.com/OpenZeppelin/openzeppelin-contracts/issues/2465
 
 pragma solidity "0.8.0";
