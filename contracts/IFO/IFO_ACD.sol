@@ -66,7 +66,9 @@ contract IFOACD is Ownable{
     // modifier to prevent admin from calling critical set up functions before 3 days after harvest time
 
     modifier adminTimeLock() {
-        require(block.number >= endBlock + 20, 'admin must wait');
+        if(endBlock != 0){
+            require(block.number >= endBlock + 5, 'admin must wait');
+        }
         _;
     }
 
@@ -80,8 +82,10 @@ contract IFOACD is Ownable{
     constructor(
         IERC20 _lpToken,
         IERC20 _offeringToken,
-        uint256 _offeringAmount,
-        uint256 _price,
+        uint256 _offeringAmount0,
+        uint256 _offeringAmount1,
+        uint256 _price0,
+        uint256 _price1,
         uint256 _startBlock,
         uint256 _endBlock,
         address _owner
@@ -91,7 +95,8 @@ contract IFOACD is Ownable{
         require(_lpToken != _offeringToken, "Tokens must be be different");
         lpToken = _lpToken;
         offeringToken = _offeringToken;
-        setPool(_offeringAmount, _price, 0, 0);
+        setPool(_offeringAmount0, _price0, 0, 0);
+        setPool(_offeringAmount1, _price1, 0, 1);
         updateStartAndEndBlocks(_startBlock, _endBlock);
         transferOwnership(_owner);
     }
