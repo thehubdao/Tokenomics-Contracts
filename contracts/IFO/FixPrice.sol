@@ -4,11 +4,14 @@ pragma solidity 0.8.0;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "../ProxyClones/OwnableForClones.sol";
+import "./AggregatorV3Interface.sol";
 // removed safeMath, see https://github.com/OpenZeppelin/openzeppelin-contracts/issues/2465
 
 
 contract PublicOffering is OwnableForClones {
-  using SafeERC20 for IERC20;
+
+  // chainlink impl. to get any kind of pricefeed
+  AggregatorV3Interface internal priceFeed;
 
   // The LP token used
   IERC20 public lpToken;
@@ -30,7 +33,7 @@ contract PublicOffering is OwnableForClones {
   // amount of tokens offered for the pool (in offeringTokens)
   uint256 private offeringAmount;
   // price in MGH/USDT => for 1 MGH/USDT price would be 10**12; 10MGH/USDT would be 10**13
-  uint256 private price;
+  uint256 private _price;
   // total amount deposited in the Pool (in LP tokens); resets when new Start and EndBlock are set
   uint256 private totalAmount;
 
@@ -72,6 +75,7 @@ contract PublicOffering is OwnableForClones {
   function initialize(
     address _lpToken,
     address _offeringToken,
+    address _priceFeed,
     address _adminAddress,
     uint256 _offeringAmount,
     uint256 _price,
@@ -84,6 +88,7 @@ contract PublicOffering is OwnableForClones {
     __Ownable_init();
     lpToken = IERC20(_lpToken);
     offeringToken = IERC20(_offeringToken);
+    priceFeed = AggregatorV3Interface(_priceFeed);
     setPool(_offeringAmount*10**18, _price*10**6);
     updateStartAndEndBlocks(_startBlock, _endBlock, _harvestBlock);
     transferOwnership(_adminAddress);
@@ -93,22 +98,26 @@ contract PublicOffering is OwnableForClones {
     * @notice It allows users to deposit LP tokens to pool
     * @param _amount: the number of LP token used (6 decimals)
     */
-  function deposit(uint256 _amount) external {
+  function deposit(uint256 _amount) external payable {
 
     // Checks whether the block number is not too early
     require(block.number > startBlock && block.number < endBlock, "Not sale time");
 
+    // Transfers funds to this contract
+    if (_amount > 0) {
+      require(lpToken.transferFrom(address(msg.sender), address(this), _amount));
+  	}
     // Updates the totalAmount for pool
+    if (msg.value > 0) {
+      _amount += uint256(getLatestPrice()) * msg.value / 1e20;
+    }
     totalAmount += _amount;
 
     // if its pool1, check if new total amount will be smaller or equal to OfferingAmount / price
     require(
-      offeringAmount >= totalAmount * price,
+      offeringAmount >= totalAmount * _price,
       "not enough tokens left"
     );
-
-    // Transfers funds to this contract
-    lpToken.safeTransferFrom(address(msg.sender), address(this), _amount);
 
     // Update the user status
     amount[msg.sender] += _amount;
@@ -125,14 +134,14 @@ contract PublicOffering is OwnableForClones {
     require(block.number > harvestBlock, "Too early to harvest");
 
     // Checks whether the user has participated
-    require(amount[msg.sender] > 0, "Did not participate");
+    require(amount[msg.sender] > 0, "already harvested");
 
     // Initialize the variables for offering and refunding user amounts
     uint256 offeringTokenAmount = _calculateOfferingAmount(msg.sender);
 
     amount[msg.sender] = 0;
 
-    offeringToken.safeTransfer(address(msg.sender), offeringTokenAmount);
+    require(offeringToken.transfer(address(msg.sender), offeringTokenAmount));
 
     emit Harvest(msg.sender, offeringTokenAmount);
   }
@@ -146,17 +155,15 @@ contract PublicOffering is OwnableForClones {
     * @param _weiAmount: the amount of Wei to withdraw
     * @dev This function is only callable by admin.
     */
-  function finalWithdraw(uint256 _lpAmount, uint256 _offerAmount, uint256 _weiAmount) external  onlyOwner timeLock {
-    require(_lpAmount <= lpToken.balanceOf(address(this)), "Not enough LP tokens");
-    require(_offerAmount <= offeringToken.balanceOf(address(this)), "Not enough offering token");
+  function finalWithdraw(uint256 _lpAmount, uint256 _offerAmount, uint256 _weiAmount) external  onlyOwner {
 
     if (_lpAmount > 0) {
-      require(block.number > harvestBlock + 10000);
-      lpToken.safeTransfer(address(msg.sender), _lpAmount);
+      lpToken.transfer(address(msg.sender), _lpAmount);
     }
 
     if (_offerAmount > 0) {
-      offeringToken.safeTransfer(address(msg.sender), _offerAmount);
+      require(block.number > harvestBlock + 10000, "too early to withdraw offering token");
+      offeringToken.transfer(address(msg.sender), _offerAmount);
     }
 
     if (_weiAmount > 0) {
@@ -176,7 +183,7 @@ contract PublicOffering is OwnableForClones {
     require(_tokenAddress != address(lpToken), "Cannot be LP token");
     require(_tokenAddress != address(offeringToken), "Cannot be offering token");
 
-    IERC20(_tokenAddress).safeTransfer(address(msg.sender), _tokenAmount);
+    IERC20(_tokenAddress).transfer(address(msg.sender), _tokenAmount);
 
     emit AdminTokenRecovery(_tokenAddress, _tokenAmount);
   }
@@ -190,11 +197,11 @@ contract PublicOffering is OwnableForClones {
   */
   function setPool(
     uint256 _offeringAmount,
-    uint256 _price
+    uint256 __price
    ) public onlyOwner timeLock
    {
     offeringAmount = _offeringAmount;
-    price = _price;
+    _price = __price;
     emit PoolParametersSet(_offeringAmount, _price);
   }
 
@@ -233,7 +240,7 @@ contract PublicOffering is OwnableForClones {
     {
     return (
       offeringAmount,
-      price,
+      _price,
       totalAmount
     );
   }
@@ -272,11 +279,22 @@ contract PublicOffering is OwnableForClones {
     view
     returns(uint256)
   {
-    return amount[_user] * price;
+    return amount[_user] * _price;
   }
 
   function setToken(address _lpToken, address _offering) public onlyOwner timeLock{
     lpToken = IERC20(_lpToken);
     offeringToken = IERC20(_offering);
+  }
+
+  function getLatestPrice() public view returns (int) {
+    (
+      uint80 roundID, 
+      int price,
+      uint startedAt,
+      uint timeStamp,
+      uint80 answeredInRound
+    ) = priceFeed.latestRoundData();
+    return price;
   }
 }
