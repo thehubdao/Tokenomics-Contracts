@@ -1,12 +1,12 @@
-const { expectRevert, time, BN } = require('@openzeppelin/test-helpers');
+const { expectEvent, expectRevert, time, BN } = require('@openzeppelin/test-helpers');
 const { MAX_UINT256, ZERO_ADDRESS } = require('@openzeppelin/test-helpers/src/constants');
 
 const assert = require('assert');
-const vest = artifacts.require('Vesting');
-const sale = artifacts.require('PublicOffering')
+const vest = artifacts.require('DACVesting');
+const sale = artifacts.require('DACPublicOffering')
 const ERC20 = artifacts.require('mockERC20');
 const ERC206 = artifacts.require('mockERC206');
-const factory = artifacts.require('VestingFactory');
+const factory = artifacts.require('DACFactory');
 
 const duration = 10; // in days
 const startIn = 1;   // in days
@@ -15,7 +15,7 @@ const cliff = 100; // 1%
 const exp = 2;
 
 
-contract('vest', ([alice, owner]) => {
+contract('vest', ([alice, owner, AggregatorDummy]) => {
     beforeEach(async () => {
         this.vesting = await vest.new();
         this.sale = await sale.new();
@@ -24,7 +24,7 @@ contract('vest', ([alice, owner]) => {
         this.USD = await ERC206.new('USD', 'USD', 1000000, { from: owner });
     });
 
-    it("factory deployed vesting clone correctly", async () => {
+    it("factory deploys vesting clone correctly, quadratic + cliff", async () => {
         await this.FAC.createVestingClone(
             await this.MGH.address,
             owner,
@@ -86,6 +86,7 @@ contract('vest', ([alice, owner]) => {
         await this.FAC.createSaleClone(
             await this.USD.address,
             await this.MGH.address,
+            AggregatorDummy,
             owner,
             1,
             10**7,
@@ -134,5 +135,84 @@ contract('vest', ([alice, owner]) => {
         await this.S.harvest({ from: owner });
         assert.equal((await this.MGH.balanceOf(owner)).toString(), "2100000000000000000000000");
         assert.equal((await this.MGH.balanceOf(clone)).toString(), "0");
+    })
+
+    it('linear with no cliff', async () => {
+        const now = time.latest();
+        await this.FAC.createVestingClone(
+            await this.MGH.address,
+            owner,
+            50,
+            1000,
+            0,
+            0,
+            1
+        );
+        const clone = await this.FAC.vestingClones.call(0);
+        this.V = await vest.at(clone);
+        const start = await this.V.startTime.call();
+        const _duration = await this.V.duration.call();
+
+        assert.equal((await this.V.owner()).toString(), owner.toString());
+        assert.equal((await this.V.getRetrievablePercentage()).toString(), "0");
+
+        await this.MGH.approve(clone, MAX_UINT256, {from: owner });
+        await this.MGH.approve(clone, MAX_UINT256, {from: alice });
+        
+        await this.V.depositFor(alice, 1000000, { from: owner });
+        await expectRevert(
+            this.V.retrieve({ from: alice }),
+            "nothing to retrieve",
+        );
+        assert.equal(await this.MGH.balanceOf(alice), 0);
+
+        await time.increaseTo(start);
+
+        await expectRevert(
+            this.V.retrieve({ from: owner }),
+            'nothing to retrieve',
+        );
+        await expectRevert(
+            this.V.retrieve({ from: alice }),
+            'nothing to retrieve',
+        );
+        await this.V.retrieveFor([alice, owner], { from: owner });
+        assert.equal(await this.MGH.balanceOf(alice), 0);
+        assert.equal(await this.MGH.balanceOf(clone), 1000000);
+
+        await time.increaseTo(start.add(new BN(_duration/2)));
+        
+        console.log("fraction of time passed: " + (await time.latest()).sub((await this.V.startTime.call()))/(new BN(_duration)));
+
+        assert.equal((await this.V.getRetrievablePercentage()).toString(), "50");
+
+        await this.V.retrieve({ from: alice });
+        await expectRevert(
+            this.V.retrieve({ from: alice }),
+            "nothing to retrieve",
+        );
+
+        assert.equal(await this.MGH.balanceOf(alice), 500000);
+
+        time.increaseTo(start.add(new BN(_duration)));
+
+        await this.V.retrieveFor([alice, owner], { from: alice });
+        assert.equal(await this.MGH.balanceOf(alice), 1000000);
+        assert.equal(await this.MGH.balanceOf(clone), 0);
+        await expectRevert(
+            this.V.depositFor(alice, 1000001, { from: alice }),
+            "ERC20: transfer amount exceeds balance",
+        );
+        await this.V.depositAllFor(alice, { from: owner });
+        assert.equal(await this.MGH.balanceOf(clone), 1000000);
+        assert.equal(await this.V.balanceOf(alice), 2000000);
+
+        time.increaseTo(start.add(new BN(_duration+86400)));
+
+        await this.V.retrieveFor([alice], { from: owner });
+        assert.equal(await this.MGH.balanceOf(alice), 2000000);
+        assert.equal(await this.V.getTotalDeposit(alice), 2000000);
+        assert.equal(await this.V.getRetrievableAmount(alice), 0);
+        assert.equal(await this.V.getRetrievablePercentage(), 100);
     })
 })
