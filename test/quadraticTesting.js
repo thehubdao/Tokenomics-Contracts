@@ -1,16 +1,26 @@
 const { expectRevert, time, BN } = require('@openzeppelin/test-helpers');
 const { MAX_UINT256 } = require('@openzeppelin/test-helpers/src/constants');
 const assert = require('assert');
-const vest = artifacts.require('QuadraticVesting');
+const vest = artifacts.require('DACVesting');
 const ERC20 = artifacts.require('mockERC20');
 
 const duration = 10; // in days
 const startIn = 1;   // in days
 
+
 contract('vest', ([alice, owner]) => {
   before(async () => {
     this.MGH = await ERC20.new('MetaGameHub', 'MGH', 2100000, { from: owner });
-    this.V = await vest.new(this.MGH.address, duration, startIn, { from: owner });
+    this.V = await vest.new();
+    this.V.initialize(
+      await this.MGH.address,
+      owner,
+      startIn,
+      duration,
+      0,
+      1,
+      2
+    );
     await this.MGH.transfer(alice, 1000000, { from: owner });
     await this.MGH.approve(await this.V.address, MAX_UINT256, { from: alice });
     await this.MGH.approve(await this.V.address, MAX_UINT256, { from: owner });
@@ -27,13 +37,12 @@ contract('vest', ([alice, owner]) => {
     assert.equal(await this.V.getTotalDeposit(owner), 500000);
     assert.equal(await this.V.getTotalDeposit(alice), 700000);
 
-    assert.equal(await this.V.getRetrievableAmount({ from: alice }), 0);
+    assert.equal(await this.V.getRetrievableAmount(alice), 0);
     assert.equal(await this.V.getRetrievablePercentage(), 0);
 
     await time.increaseTo(start.add(new BN(10)));
     await this.V.depositAllFor(alice, { from: owner });
     assert.equal(await this.V.getTotalDeposit(alice), 1100000);
-    assert.equal(await this.MGH.balanceOf(owner), 100000);
 
     await expectRevert(
       this.V.retrieve({ from: alice }),
@@ -79,7 +88,7 @@ contract('vest', ([alice, owner]) => {
     );
     await this.V.decreaseVesting(alice, 600000, { from: owner });
 
-    assert.equal(await this.V.getRetrievableAmount({ from: alice}), 125520);
+    assert.equal(await this.V.getRetrievableAmount(alice), 125520);
 
     time.increaseTo(await start.add( new BN(duration * 86400 * 9 / 10)));
     await this.V.retrieve({ from: owner });
@@ -88,7 +97,6 @@ contract('vest', ([alice, owner]) => {
       this.V.retrieve({ from: owner }),
       "nothing to retrieve",
     );
-    assert.equal((await this.MGH.balanceOf(owner)).toString(), "405000");
 
     await this.V.retrieve({ from: alice });
     assert.equal((await this.MGH.balanceOf(alice)).toString(), "886000");
@@ -99,7 +107,6 @@ contract('vest', ([alice, owner]) => {
     await this.V.retrieve({ from: owner });
 
     assert.equal((await this.MGH.balanceOf(alice)).toString(), "1000000");
-    assert.equal((await this.MGH.balanceOf(owner)).toString(), "500000");
     assert.equal((await this.MGH.balanceOf(await this.V.address)).toString(), "600000");
 
     await this.V.depositFor(alice, 500000, { from: alice });
