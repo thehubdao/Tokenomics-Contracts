@@ -1,30 +1,43 @@
+// SPDX-License-Identifier: MIT
+
 pragma solidity 0.8.0;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "../ProxyClones/OwnableForClones.sol";
 
-/*
- This Contract allows for vesting of a single ERC20 token starting at a hardcoded Timestamp for a hardcoded duration.
- the amount of the balance a user can retrieve is linearly dependent on
- the fraction of the duration that has already passed since startTime squared.
- => retrievableAmount = (timePassed/Duration)^2 * totalAmount
- => 50 percent of time passed => 25% of total amount is retrievable
- @dev this contract implements balanceOf function for implementation with the snapshot ERC20-balanceOf strategy
-*/
+// Flexible Vesting Schedule with easy Snapshot compatibility designed by Phil Thomsen @theDAC
+//for more information please visit: github.cikm
 
 
-contract Vesting is OwnableForClones {
+contract DACVesting is OwnableForClones {
 
-  IERC20 private token;
+  IERC20 public token;
+  // Blocktime when the release schedule starts
   uint256 public startTime;
+
+  //everything is released once blocktime >= startTime + duration
   uint256 public duration;
-  uint256 private exp;
+
+  // 1= linear; 2 = quadratic etc.
+  uint256 public exp;
+
   // cliff: 100 = 1%;
-  uint256 private cliff;
-  uint256 private cliffDelay;
+  uint256 public cliff;
+  // indicates how much earlier than startTime the cliff amount gets released
+  uint256 public cliffDelay;
+
+  // maps what each user has deposited total / gotten back out total; Deposit>=Drained at all times
   mapping(address => uint256) private totalDeposit;
   mapping(address => uint256) private drainedAmount;
 
+  /**
+   * @notice initializes the contract, with all parameters set at once
+   * @param _token the only token contract that is accepted in this vesting instance
+   * @param _owner the owner that can call decreaseVesting, set address(0) to have no owner
+   * @param _cliffInTenThousands amount of tokens to be released ahead of startTime: 10000 => 100%
+   * @param _cliffDelayInDays the cliff can be retrieved this many days before StartTime of the schedule
+   * @param _exp this sets the pace of the schedule. 0 is instant, 1 is linear over time, 2 is quadratic over time etc.
+   */
   function initialize
    (
     address _token,
@@ -51,16 +64,38 @@ contract Vesting is OwnableForClones {
     }
   }
 
-  function depositAllFor(address _recipient) external {
-    depositFor(_recipient, token.balanceOf(_recipient));
+  /**
+  * @notice sender can deposit tokens for someone else
+  * @param _recipient the use to deposit for 
+  * @param _amount the amount of tokens to deposit with all decimals
+  */
+  function depositFor(address _recipient, uint256 _amount) external {
+    _rawDeposit(msg.sender, _recipient, _amount);
   }
 
+  /**
+  * @notice deposits the amount owned by _recipient from sender for _recipient into this contract
+  * @param _recipient the address the funds are vested for
+  * @dev only useful in specific contexts like having to burn a wallet and deposit it back in the vesting contract e.g.
+  */
+  function depositAllFor(address _recipient) external {
+    _rawDeposit(msg.sender, _recipient, token.balanceOf(_recipient));
+  }
+
+  /**
+  * @notice user method to retrieve all that is retrievable
+  * @notice reverts when there is nothing to retrieve to save gas
+  */
   function retrieve() external {
     uint256 amount = getRetrievableAmount(msg.sender);
     require(amount != 0, "nothing to retrieve");
     _rawRetrieve(msg.sender, amount);
   }
 
+  /**
+  * @notice retrieve for an array of addresses at once, useful if users are unable to use the retrieve method or to save gas with mass retrieves
+  * @dev does NOT revert when one of the accounts has nothing to retrieve
+  */
   function retrieveFor(address[] memory accounts) external {
     for (uint256 i = 0; i < accounts.length; i++) {
       uint256 amount = getRetrievableAmount(accounts[i]);
@@ -68,29 +103,50 @@ contract Vesting is OwnableForClones {
     }
   }
 
+  /**
+  * @notice if the ownership got renounced (owner == 0), then this function is uncallable and the vesting is trustless for benificiary
+  * @dev only callable by the owner of this instance
+  * @dev amount will be stuck in the contract and effectively burned
+  */
   function decreaseVesting(address _account, uint256 amount) external onlyOwner {
     require(drainedAmount[_account] <= totalDeposit[_account] - amount, "deposit has to be >= drainedAmount");
     totalDeposit[_account] -= amount;
   }
 
+  /**
+  * @return the total amount that got deposited for _account over the whole lifecycle with all decimal places
+  */
   function getTotalDeposit(address _account) external view returns(uint256) {
     return totalDeposit[_account];
   }
 
+  /** 
+  * @return the amount of tokens still in vesting for _account
+  */
+  function getTotalVestingBalance(address _account) external view returns(uint256) {
+    return totalDeposit[_account] - drainedAmount[_account];
+  }
+
+  /**
+  * @return the percentage that is retrievable, 100 = 100%
+  */
   function getRetrievablePercentage() external view returns(uint256) {
     return _getPercentage() / 100;
   }
 
+  /**
+  * @notice useful for easy snapshot implementation
+  * @return the balance of token for this account plus the amount that is still vested for account
+  */
   function balanceOf(address account) external view returns(uint256) {
     return token.balanceOf(account) + totalDeposit[account] - drainedAmount[account];
   }
 
+  /**
+  * @return the amount that _account can retrieve at that block with all decimals
+  */
   function getRetrievableAmount(address _account) public view returns(uint256) {
     return (_getPercentage() * totalDeposit[_account] / 1e4) - drainedAmount[_account];
-  }
-
-  function depositFor(address _recipient, uint256 _amount) public {
-    _rawDeposit(msg.sender, _recipient, _amount);
   }
 
   function _rawDeposit(address _from, address _for, uint256 _amount) internal {
@@ -104,9 +160,10 @@ contract Vesting is OwnableForClones {
     assert(drainedAmount[account] <= totalDeposit[account]);
   }
 
-    // 1e4 => 100%; 1e3 => 10%; 1e2 => 1%;
-    // if startTime is not reached return 0
-    // if the duration is over return 1e4
+  /**
+  * @dev the core calculation method
+  * @dev returns 1e4 for 100%; 1e3 for 10%; 1e2 for 1%; 1e1 for 0.1% and 1e0 for 0.01%
+  */
   function _getPercentage() private view returns(uint256) {
     if (cliff == 0) {
       return _getPercentageNoCliff();
@@ -119,7 +176,7 @@ contract Vesting is OwnableForClones {
     if (startTime > block.timestamp) {
       return 0;
     }else if (startTime + duration > block.timestamp) {
-      return 1e4 * (block.timestamp - startTime)**exp / duration**exp;
+      return (1e4 * (block.timestamp - startTime)**exp) / duration**exp;
     }else {
       return 1e4;
     }
@@ -136,5 +193,4 @@ contract Vesting is OwnableForClones {
       return 1e4;
     }
   }
-
 }
