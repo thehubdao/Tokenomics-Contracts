@@ -26,6 +26,8 @@ contract IFOACD is Ownable{
     // The block number when IFO ends
     uint256 public endBlock;
 
+    uint256 private harvestBlock;
+
     // Array of PoolCharacteristics of size numberPools
     PoolCharacteristics[numberPools] private _poolInformation;
 
