@@ -5,10 +5,9 @@ pragma solidity 0.8.0;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "../ProxyClones/OwnableForClones.sol";
 import "./AggregatorV3Interface.sol";
-// removed safeMath, see https://github.com/OpenZeppelin/openzeppelin-contracts/issues/2465
 
-
-contract PublicOffering is OwnableForClones {
+/// @notice ONLY USE THIS CONTRACT WITH OFFERING TOKEN WITH 18 DECIMALS AND LPTOKEN WITH 6 DECIMALS!
+contract DACPublicOffering is OwnableForClones {
 
   // chainlink impl. to get any kind of pricefeed
   AggregatorV3Interface internal priceFeed;
@@ -25,6 +24,7 @@ contract PublicOffering is OwnableForClones {
   // The block number when IFO ends
   uint256 public endBlock;
 
+  //after this block harvesting is possible
   uint256 private harvestBlock;
 
   // maps the user-address and PoolID to the deposited amount in that Pool
@@ -32,12 +32,14 @@ contract PublicOffering is OwnableForClones {
 
   // amount of tokens offered for the pool (in offeringTokens)
   uint256 private offeringAmount;
+
   // price in MGH/USDT => for 1 MGH/USDT price would be 10**12; 10MGH/USDT would be 10**13
   uint256 private _price;
+
   // total amount deposited in the Pool (in LP tokens); resets when new Start and EndBlock are set
   uint256 private totalAmount;
 
-  // Admin withdraw events
+  // Admin withdraw event
   event AdminWithdraw(uint256 amountLP, uint256 amountOfferingToken, uint256 amountWei);
 
   // Admin recovers token
@@ -58,19 +60,19 @@ contract PublicOffering is OwnableForClones {
   // timeLock ensures that users have enough time to harvest before Admin withdraws tokens,
   // sets new Start and EndBlocks or changes Pool specifications (~1e5 Blocks)
   modifier timeLock() {
-    require(block.number > endBlock, "must wait before calling this function");
+    require(block.number > harvestBlock + 10000, "admin must wait before calling this function");
     _;
   }
 
-
-
   /**
     * @dev It can only be called once.
-    * @param _lpToken: the LP token used
-    * @param _offeringToken: the token that is offered for the IFO
-    * @param _startBlock: the intial start block for the IFO
-    * @param _endBlock: the inital end block for the IFO
-    * @param _adminAddress: the admin address
+    * @param _lpToken the LP token used
+    * @param _offeringToken the token that is offered for the IFO
+    * @param _offeringAmount amount without decimals
+    * @param __price the price in OfferingToken/LPToken adjusted already by 6 decimal places
+    * @param _startBlock the intial start block for the IFO
+    * @param _endBlock the inital end block for the IFO
+    * @param _adminAddress the admin address
   */
   function initialize(
     address _lpToken,
@@ -78,7 +80,7 @@ contract PublicOffering is OwnableForClones {
     address _priceFeed,
     address _adminAddress,
     uint256 _offeringAmount,
-    uint256 _price,
+    uint256 __price,
     uint256 _startBlock,
     uint256 _endBlock,
     uint256 _harvestBlock
@@ -89,7 +91,7 @@ contract PublicOffering is OwnableForClones {
     lpToken = IERC20(_lpToken);
     offeringToken = IERC20(_offeringToken);
     priceFeed = AggregatorV3Interface(_priceFeed);
-    setPool(_offeringAmount*10**18, _price*10**6);
+    setPool(_offeringAmount*10**18, __price*10**6);
     updateStartAndEndBlocks(_startBlock, _endBlock, _harvestBlock);
     transferOwnership(_adminAddress);
   }
@@ -109,7 +111,7 @@ contract PublicOffering is OwnableForClones {
   	}
     // Updates the totalAmount for pool
     if (msg.value > 0) {
-      _amount += uint256(getLatestPrice()) * msg.value / 1e20;
+      _amount += uint256(getLatestEthPrice()) * msg.value / 1e20;
     }
     totalAmount += _amount;
 
@@ -149,7 +151,7 @@ contract PublicOffering is OwnableForClones {
 
   /**
     * @notice It allows the admin to withdraw funds
-    * @notice timeLock
+    * @notice the offering token can only be withdrawn 10000 blocks after harvesting
     * @param _lpAmount: the number of LP token to withdraw (18 decimals)
     * @param _offerAmount: the number of offering amount to withdraw
     * @param _weiAmount: the amount of Wei to withdraw
@@ -189,11 +191,10 @@ contract PublicOffering is OwnableForClones {
   }
 
   /**
-    * @notice It sets parameters for pool
-    * @param _offeringAmount : offering amount (in tokens)
-    * @dev This function is only callable by admin.
-    * @notice can not offer more than the current balance of the contract
     * @notice timeLock
+    * @notice It sets parameters for pool
+    * @param _offeringAmount offering amount with all decimals
+    * @dev This function is only callable by admin
   */
   function setPool(
     uint256 _offeringAmount,
@@ -210,7 +211,7 @@ contract PublicOffering is OwnableForClones {
     * @param _startBlock: the new start block
     * @param _endBlock: the new end block
     * @notice timeLock
-    * @notice automatically resets the totalAmount in each Pool to 0
+    * @notice automatically resets the totalAmount in the Pool to 0
   */
   function updateStartAndEndBlocks(uint256 _startBlock, uint256 _endBlock, uint256 _harvestBlock) public onlyOwner timeLock {
     require(_startBlock < _endBlock, "New startBlock must be lower than new endBlock");
@@ -287,9 +288,12 @@ contract PublicOffering is OwnableForClones {
     offeringToken = IERC20(_offering);
   }
 
-  function getLatestPrice() public view returns (int) {
+  /**
+  * @return returns the price from the AggregatorV3 contract specified in initialization 
+  */
+  function getLatestEthPrice() internal view returns (int) {
     (
-      uint80 roundID, 
+      uint80 roundID,
       int price,
       uint startedAt,
       uint timeStamp,
