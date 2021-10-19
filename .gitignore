@@ -5,3 +5,4 @@ migrations/
 *.json
 truffle-config.js
 .soliumignore
+scripts/
