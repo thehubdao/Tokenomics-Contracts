@@ -6,8 +6,14 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "../ProxyClones/OwnableForClones.sol";
 import "./AggregatorV3Interface.sol";
 
-/// @notice ONLY USE THIS CONTRACT WITH OFFERING TOKEN WITH 18 DECIMALS AND LPTOKEN WITH 6 DECIMALS!
-contract DACPublicOffering is OwnableForClones {
+/**
+
+    ✩░▒▓▆▅▃▂▁𝐌𝐞𝐭𝐚𝐆𝐚𝐦𝐞𝐇𝐮𝐛▁▂▃▅▆▓▒░✩
+
+*/
+
+
+contract MGHPublicOffering is OwnableForClones {
 
   // chainlink impl. to get any kind of pricefeed
   AggregatorV3Interface internal priceFeed;
@@ -27,7 +33,7 @@ contract DACPublicOffering is OwnableForClones {
   //after this block harvesting is possible
   uint256 private harvestBlock;
 
-  // maps the user-address and PoolID to the deposited amount in that Pool
+  // maps the user-address to the deposited amount in that Pool
   mapping(address => uint256) private amount;
 
   // amount of tokens offered for the pool (in offeringTokens)
@@ -54,13 +60,13 @@ contract DACPublicOffering is OwnableForClones {
   // Event for new start & end blocks
   event NewStartAndEndBlocks(uint256 startBlock, uint256 endBlock);
 
-  // Event when parameters are set for one of the pools
+  // parameters are set for the pool
   event PoolParametersSet(uint256 offeringAmount, uint256 price);
 
   // timeLock ensures that users have enough time to harvest before Admin withdraws tokens,
-  // sets new Start and EndBlocks or changes Pool specifications (~1e5 Blocks)
+  // sets new Start and EndBlocks or changes Pool specifications
   modifier timeLock() {
-    require(block.number > harvestBlock + 10000, "admin must wait before calling this function");
+    require(block.number > harvestBlock, "admin must wait before calling this function");
     _;
   }
 
@@ -70,8 +76,9 @@ contract DACPublicOffering is OwnableForClones {
     * @param _offeringToken the token that is offered for the IFO
     * @param _offeringAmount amount without decimals
     * @param __price the price in OfferingToken/LPToken adjusted already by 6 decimal places
-    * @param _startBlock the intial start block for the IFO
-    * @param _endBlock the inital end block for the IFO
+    * @param _startBlock start of sale time
+    * @param _endBlock end of sale time
+    * @param _harvestBlock start of harvest time
     * @param _adminAddress the admin address
   */
   function initialize(
@@ -97,9 +104,9 @@ contract DACPublicOffering is OwnableForClones {
   }
 
   /**
-    * @notice It allows users to deposit LP tokens to pool
+    * @notice It allows users to deposit LP tokens opr ether to pool
     * @param _amount: the number of LP token used (6 decimals)
-    */
+  */
   function deposit(uint256 _amount) external payable {
 
     // Checks whether the block number is not too early
@@ -156,7 +163,7 @@ contract DACPublicOffering is OwnableForClones {
     * @param _offerAmount: the number of offering amount to withdraw
     * @param _weiAmount: the amount of Wei to withdraw
     * @dev This function is only callable by admin.
-    */
+  */
   function finalWithdraw(uint256 _lpAmount, uint256 _offerAmount, uint256 _weiAmount) external  onlyOwner {
 
     if (_lpAmount > 0) {
@@ -180,7 +187,7 @@ contract DACPublicOffering is OwnableForClones {
     * @param _tokenAddress: the address of the token to withdraw (18 decimals)
     * @param _tokenAmount: the number of token amount to withdraw
     * @dev This function is only callable by admin.
-    */
+  */
   function recoverWrongTokens(address _tokenAddress, uint256 _tokenAmount) external onlyOwner {
     require(_tokenAddress != address(lpToken), "Cannot be LP token");
     require(_tokenAddress != address(offeringToken), "Cannot be offering token");
@@ -208,15 +215,14 @@ contract DACPublicOffering is OwnableForClones {
 
   /**
     * @notice It allows the admin to update start and end blocks
+    * @notice automatically resets the totalAmount in the Pool to 0, but not userAmounts
+    * @notice timeLock
     * @param _startBlock: the new start block
     * @param _endBlock: the new end block
-    * @notice timeLock
-    * @notice automatically resets the totalAmount in the Pool to 0
   */
   function updateStartAndEndBlocks(uint256 _startBlock, uint256 _endBlock, uint256 _harvestBlock) public onlyOwner timeLock {
     require(_startBlock < _endBlock, "New startBlock must be lower than new endBlock");
     require(block.number < _startBlock, "New startBlock must be higher than current block");
-    //reset the totalAmount in the pool, when initiating new start and end blocks
     totalAmount = 0;
     startBlock = _startBlock;
     endBlock = _endBlock;
@@ -228,6 +234,7 @@ contract DACPublicOffering is OwnableForClones {
   /**
     * @notice It returns the pool information
     * @return offeringAmountPool: amount of tokens offered for the pool (in offeringTokens)
+    * @return _price the price in OfferingToken/LPToken, 10**12 means 1:1 because of different decimal places
     * @return totalAmountPool: total amount pool deposited (in LP tokens)
   */
   function viewPoolInformation()
@@ -259,8 +266,8 @@ contract DACPublicOffering is OwnableForClones {
   }
 
   /**
-  * @notice External view function to see user offering amounts
-  * @param _user: user address
+    * @notice External view function to see user offering amounts
+    * @param _user: user address
   */
   function viewUserOfferingAmount(address _user)
     external
@@ -273,7 +280,7 @@ contract DACPublicOffering is OwnableForClones {
   /**
     * @notice It calculates the offering amount for a user and the number of LP tokens to transfer back.
     * @param _user: user address
-    * @return {uint256, uint256} It returns the offering amount, the refunding amount (in LP tokens)
+    * @return the amount of OfferingTokens _user receives as of now
   */
   function _calculateOfferingAmount(address _user)
     internal
@@ -283,15 +290,15 @@ contract DACPublicOffering is OwnableForClones {
     return amount[_user] * _price;
   }
 
-  function setToken(address _lpToken, address _offering) public onlyOwner timeLock{
+  function setToken(address _lpToken, address _offering) public onlyOwner timeLock {
     lpToken = IERC20(_lpToken);
     offeringToken = IERC20(_offering);
   }
 
   /**
-  * @return returns the price from the AggregatorV3 contract specified in initialization 
+    * @return returns the price from the AggregatorV3 contract specified in initialization 
   */
-  function getLatestEthPrice() internal view returns (int) {
+  function getLatestEthPrice() public view returns(int) {
     (
       uint80 roundID,
       int price,
