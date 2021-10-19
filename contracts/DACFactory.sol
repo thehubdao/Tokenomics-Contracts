@@ -5,9 +5,10 @@ pragma solidity 0.8.0;
 import "@openzeppelin/contracts/proxy/Clones.sol";
 import "./Vesting/IvestingMinimal.sol";
 import "./IFO/IFixPriceMinimal.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
 
 
-contract DACFactory {
+contract DACFactory is Ownable {
 
   address public vestingImp;
   address public saleImp;
@@ -59,7 +60,7 @@ contract DACFactory {
     external returns(address clone)
     {
     clone = Clones.clone(saleImp);
-    IDACPublicOffering(clone).initialize(
+    IMGHPublicOffering(clone).initialize(
       lpToken,
       offeringToken,
       priceFeed,
@@ -75,5 +76,10 @@ contract DACFactory {
 
   function customClone(address implementation) public returns(address clone) {
     clone = Clones.clone(implementation);
+  }
+
+  function updateImplementation(address _saleImp, address _vestImp) external onlyOwner {
+    saleImp = _saleImp;
+    vestingImp = _vestImp;
   }
 }
