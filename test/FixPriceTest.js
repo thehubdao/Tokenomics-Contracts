@@ -4,7 +4,7 @@ const { MAX_UINT256, ZERO_ADDRESS } = require("@openzeppelin/test-helpers/src/co
 const ether = require("@openzeppelin/test-helpers/src/ether");
 const assert = require("assert");
 
-const sale = artifacts.require("DACPublicOffering");
+const sale = artifacts.require("MGHPublicOffering");
 const ERC20 = artifacts.require("mockERC20");
 const ERC206 = artifacts.require("mockERC206");
 const AGG3 = artifacts.require("mockAggregatorV3")

@@ -3,7 +3,7 @@ const { MAX_UINT256, ZERO_ADDRESS } = require('@openzeppelin/test-helpers/src/co
 
 const assert = require('assert');
 const vest = artifacts.require('DACVesting');
-const sale = artifacts.require('DACPublicOffering')
+const sale = artifacts.require('MGHPublicOffering')
 const ERC20 = artifacts.require('mockERC20');
 const ERC206 = artifacts.require('mockERC206');
 const factory = artifacts.require('DACFactory');
