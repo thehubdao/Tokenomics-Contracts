@@ -3,7 +3,7 @@
 pragma solidity 0.8.0;
 
 
-interface IDACPublicOffering {
+interface IMGHPublicOffering {
 
     function initialize (
         address _lpToken,
