@@ -30,6 +30,11 @@ interface Ivesting {
     external;
 
   /**
+  * @notice same as depositFor but with memory array as input
+  */
+  function depositForCrowd(address[] memory _recipient, uint256[] memory _amount) external;
+
+  /**
   * @notice deposits the amount owned by _recipient from sender for _recipient into this contract
   * @param _recipient the address the funds are vested for
   * @dev only useful in specific contexts like having to burn a wallet and deposit it back in the vesting contract e.g.

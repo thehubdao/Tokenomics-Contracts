@@ -30,6 +30,10 @@ contract DACVesting is OwnableForClones {
   mapping(address => uint256) private totalDeposit;
   mapping(address => uint256) private drainedAmount;
 
+  event TokensDeposited(address indexed beneficiary, uint256 indexed amount);
+  event TokensRetrieved(address indexed beneficiary, uint256 indexed amount);
+  event VestingDecreased(address indexed beneficiary, uint256 indexed amount);
+
   /**
    * @notice initializes the contract, with all parameters set at once
    * @param _token the only token contract that is accepted in this vesting instance
@@ -61,6 +65,16 @@ contract DACVesting is OwnableForClones {
       renounceOwnership();
     }else {
       transferOwnership(_owner);
+    }
+  }
+
+  /**
+  * @notice same as depositFor but with memory array as input for gas savings
+  */
+  function depositForCrowd(address[] memory _recipient, uint256[] memory _amount) external {
+    require(_recipient.length == _amount.length, "lengths must match");
+    for (uint256 i = 0; i < _recipient.length; i++) {
+      _rawDeposit(msg.sender, _recipient[i], _amount[i]);    
     }
   }
 
@@ -111,6 +125,7 @@ contract DACVesting is OwnableForClones {
   function decreaseVesting(address _account, uint256 amount) external onlyOwner {
     require(drainedAmount[_account] <= totalDeposit[_account] - amount, "deposit has to be >= drainedAmount");
     totalDeposit[_account] -= amount;
+    emit VestingDecreased(_account, amount);
   }
 
   /**
@@ -146,18 +161,24 @@ contract DACVesting is OwnableForClones {
   * @return the amount that _account can retrieve at that block with all decimals
   */
   function getRetrievableAmount(address _account) public view returns(uint256) {
-    return (_getPercentage() * totalDeposit[_account] / 1e4) - drainedAmount[_account];
+    if(_getPercentage() * totalDeposit[_account] / 1e4 > drainedAmount[_account]) {
+      return (_getPercentage() * totalDeposit[_account] / 1e4) - drainedAmount[_account];
+    }else {
+      return 0;
+    }
   }
 
-  function _rawDeposit(address _from, address _for, uint256 _amount) internal {
+  function _rawDeposit(address _from, address _for, uint256 _amount) private {
     require(token.transferFrom(_from, address(this), _amount));
     totalDeposit[_for] += _amount;
+    emit TokensDeposited(_for, _amount);
   }
 
-  function _rawRetrieve(address account, uint256 amount) internal {
+  function _rawRetrieve(address account, uint256 amount) private {
     drainedAmount[account] += amount;
     token.transfer(account, amount);
     assert(drainedAmount[account] <= totalDeposit[account]);
+    emit TokensRetrieved(account, amount);
   }
 
   /**
