@@ -5,7 +5,8 @@ Welcome to the repository containing the contracts for managing Tokenomics for a
     2. Vesting
     3. Staking (in progress)
     4. A factory contract to facilitate cheap, immutable replicas
-
+   --more documentation can be found in the contracts
+   
 1. Token distribution - FixPrice.sol
 
     1.1 What can this contract do?
