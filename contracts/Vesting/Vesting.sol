@@ -5,8 +5,7 @@ pragma solidity 0.8.0;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "../ProxyClones/OwnableForClones.sol";
 
-// Flexible Vesting Schedule with easy Snapshot compatibility designed by Phil Thomsen @theDAC
-//for more information please visit: github.cikm
+// Flexible Vesting Schedule with easy Snapshot compatibility  @theDAC
 
 
 contract DACVesting is OwnableForClones {
