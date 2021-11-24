@@ -1,14 +1,14 @@
 pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 
 // Inheritance
-import "./RewardsDistributionRecipient.sol";
-import "./Pausable.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
 
 // https://docs.synthetix.io/contracts/source/contracts/stakingrewards
-contract StakingRewards is RewardsDistributionRecipient, ReentrancyGuard, Pausable {
+contract StakingRewards is ReentrancyGuard, Ownable {
     using SafeMath for uint256;
 
     /* ========== STATE VARIABLES ========== */
@@ -31,13 +31,12 @@ contract StakingRewards is RewardsDistributionRecipient, ReentrancyGuard, Pausab
 
     constructor(
         address _owner,
-        address _rewardsDistribution,
         address _rewardsToken,
         address _stakingToken
-    ) public Owned(_owner) {
+    ) {
         rewardsToken = IERC20(_rewardsToken);
         stakingToken = IERC20(_stakingToken);
-        rewardsDistribution = _rewardsDistribution;
+        transferOwnership(_owner);
     }
 
     /* ========== VIEWS ========== */
@@ -74,7 +73,7 @@ contract StakingRewards is RewardsDistributionRecipient, ReentrancyGuard, Pausab
 
     /* ========== MUTATIVE FUNCTIONS ========== */
 
-    function stake(uint256 amount) external nonReentrant notPaused updateReward(msg.sender) {
+    function stake(uint256 amount) external nonReentrant updateReward(msg.sender) {
         require(amount > 0, "Cannot stake 0");
         _totalSupply = _totalSupply.add(amount);
         _balances[msg.sender] = _balances[msg.sender].add(amount);
@@ -107,7 +106,7 @@ contract StakingRewards is RewardsDistributionRecipient, ReentrancyGuard, Pausab
 
     /* ========== RESTRICTED FUNCTIONS ========== */
 
-    function notifyRewardAmount(uint256 reward) external onlyRewardsDistribution updateReward(address(0)) {
+    function notifyRewardAmount(uint256 reward) external onlyOwner updateReward(address(0)) {
         if (block.timestamp >= periodFinish) {
             rewardRate = reward.div(rewardsDuration);
         } else {
@@ -131,7 +130,7 @@ contract StakingRewards is RewardsDistributionRecipient, ReentrancyGuard, Pausab
     // Added to support recovering LP Rewards from other systems such as BAL to be distributed to holders
     function recoverERC20(address tokenAddress, uint256 tokenAmount) external onlyOwner {
         require(tokenAddress != address(stakingToken), "Cannot withdraw the staking token");
-        require(IERC20(tokenAddress).transfer(owner, tokenAmount), "token tranfer failed");
+        require(IERC20(tokenAddress).transfer(owner(), tokenAmount), "token tranfer failed");
         emit Recovered(tokenAddress, tokenAmount);
     }
 
