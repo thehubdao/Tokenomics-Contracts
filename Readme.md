@@ -1,9 +1,9 @@
-Welcome to the repository containing the contracts for managing Tokenomics for any project!
+Welcome, this repository contains the contracts for managing Tokenomics for any project!
 
   This repo contains contracts for:
     1. Token distribution
     2. Vesting
-    3. Staking (in progress)
+    3. Staking (reworked Synthetix Staking and bonded staking developed by us)
     4. A factory contract to facilitate cheap, immutable replicas
    --more documentation can be found in the contracts
    
