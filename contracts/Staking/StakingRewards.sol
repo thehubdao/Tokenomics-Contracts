@@ -17,7 +17,7 @@ contract StakingRewards is ReentrancyGuard, Ownable {
     IERC20 public stakingToken;
     uint256 public periodFinish = 0;
     uint256 public rewardRate = 0;
-    uint256 public rewardsDuration = 7 days;
+    uint256 public rewardsDuration = 365 days;
     uint256 public lastUpdateTime;
     uint256 public rewardPerTokenStored;
 
@@ -98,6 +98,15 @@ contract StakingRewards is ReentrancyGuard, Ownable {
         }
     }
 
+    function compound() external nonReentrant updateReward(msg.sender) {
+        uint256 reward = rewards[msg.sender];
+        require(reward != 0, 'nothing to compound');
+        rewards[msg.sender] = 0;
+        _totalSupply = _totalSupply.add(reward);
+        _balances[msg.sender] = _balances[msg.sender].add(reward);
+        emit Staked(msg.sender, reward);
+    }
+
     function exit() external {
         withdraw(_balances[msg.sender]);
         getReward();
@@ -127,10 +136,14 @@ contract StakingRewards is ReentrancyGuard, Ownable {
         emit RewardAdded(reward);
     }
 
+    function setRewardRate(uint256 _rewardRate) external onlyOwner updateReward(address(0)) {
+        rewardRate = _rewardRate;
+    }
+
     // Added to support recovering LP Rewards from other systems such as BAL to be distributed to holders
     function recoverERC20(address tokenAddress, uint256 tokenAmount) external onlyOwner {
-        require(tokenAddress != address(stakingToken), "Cannot withdraw the staking token");
-        require(IERC20(tokenAddress).transfer(owner(), tokenAmount), "token tranfer failed");
+        require(tokenAddress != address(stakingToken) || block.timestamp > periodFinish.add(7 days), "Cannot withdraw the staking token now");
+        require(IERC20(tokenAddress).transfer(owner(), tokenAmount), "token transfer failed");
         emit Recovered(tokenAddress, tokenAmount);
     }
 
