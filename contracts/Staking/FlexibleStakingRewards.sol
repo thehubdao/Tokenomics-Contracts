@@ -7,6 +7,7 @@ import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
+
 // https://docs.synthetix.io/contracts/source/contracts/stakingrewards
 contract StakingRewards is ReentrancyGuard, Ownable {
     using SafeMath for uint256;
@@ -104,7 +105,7 @@ contract StakingRewards is ReentrancyGuard, Ownable {
         rewards[msg.sender] = 0;
         _totalSupply = _totalSupply.add(reward);
         _balances[msg.sender] = _balances[msg.sender].add(reward);
-        emit Staked(msg.sender, reward);
+        emit Compounded(msg.sender, reward);
     }
 
     function exit() external {
@@ -176,4 +177,5 @@ contract StakingRewards is ReentrancyGuard, Ownable {
     event RewardPaid(address indexed user, uint256 reward);
     event RewardsDurationUpdated(uint256 newDuration);
     event Recovered(address token, uint256 amount);
+    event Compounded(address indexed user, uint256 amount);
 }
