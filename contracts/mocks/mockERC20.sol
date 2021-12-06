@@ -7,7 +7,11 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 
 contract mockERC20 is ERC20 {
 
-    constructor(string memory name, string memory symbol, uint256 supply) ERC20(name, symbol) {
-        _mint(msg.sender, supply*10**18);
+    function mint(uint256 amount) public {
+        _mint(msg.sender, amount * 10**18);
+    }
+
+    constructor(string memory name, string memory symbol, uint256 initialSupply) ERC20(name, symbol) {
+        _mint(msg.sender, initialSupply);
     }
 }

@@ -6,3 +6,4 @@ migrations/
 truffle-config.js
 .soliumignore
 scripts/
+.env

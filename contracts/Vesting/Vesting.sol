@@ -5,12 +5,12 @@ pragma solidity 0.8.0;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "../ProxyClones/OwnableForClones.sol";
 
-// Flexible Vesting Schedule with easy Snapshot compatibility  @theDAC
-
+// Flexible Vesting Schedule with easy Snapshot compatibility
 
 contract DACVesting is OwnableForClones {
 
   IERC20 public token;
+  
   // Blocktime when the release schedule starts
   uint256 public startTime;
 
@@ -22,6 +22,7 @@ contract DACVesting is OwnableForClones {
 
   // cliff: 100 = 1%;
   uint256 public cliff;
+  
   // indicates how much earlier than startTime the cliff amount gets released
   uint256 public cliffDelay;
 
