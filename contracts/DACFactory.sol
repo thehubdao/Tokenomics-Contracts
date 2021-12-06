@@ -15,6 +15,9 @@ contract DACFactory is Ownable {
   address[] public vestingClones;
   address[] public saleClones;
 
+  event VestingCreated(address indexed vesting, address indexed token);
+  event SaleCreated(address indexed _address, address indexed offeringToken);
+
   constructor(address vesting, address sale) {
     vestingImp = vesting;
     saleImp = sale;
@@ -43,6 +46,7 @@ contract DACFactory is Ownable {
       exp
     );
     vestingClones.push(clone);
+    emit VestingCreated(clone, token);
   }
 
   function createSaleClone
@@ -72,6 +76,7 @@ contract DACFactory is Ownable {
       harvestBlock
     );
     saleClones.push(clone);
+    emit SaleCreated(clone, offeringToken);
   }
 
   function customClone(address implementation) public returns(address clone) {
