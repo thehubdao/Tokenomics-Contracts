@@ -1,3 +1,4 @@
+**This Readme file is a work in progress, bear with us.**
 **UNDER CONSTRUCTION**
 
 Welcome, this repository contains the contracts for managing Tokenomics for any project!
