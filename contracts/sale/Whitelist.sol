@@ -20,32 +20,25 @@ contract Whitelist is Ownable {
 
   modifier Whitelisted() {
     require(whitelistedMap[msg.sender] == 1 || whitelistStatus == false, "You are not whitelisted");
-  _;}
+    _;
+  }
 
   function whitelistAddress(address[] calldata addressList)
     public
     onlyOwner
   {
-    for (uint j = 0; j < addressList.length; ++j)
-    {
-    whitelistedMap[addressList[j]] = 1;
+    for (uint j = 0; j < addressList.length; ++j) {
+      whitelistedMap[addressList[j]] = 1;
     }
   }
 
-  function blacklistAddress(address[] calldata addressList)
-    public
-    onlyOwner
-  {
-    for (uint j = 0; j < addressList.length; ++j)
-    {
-    whitelistedMap[addressList[j]] = 0;
+  function blacklistAddress(address[] calldata addressList) public onlyOwner {
+    for (uint j = 0; j < addressList.length; ++j) {
+      whitelistedMap[addressList[j]] = 0;
     }
   }
 
-  function changeWhitelistStatus()
-    public
-    onlyOwner
-  {
+  function changeWhitelistStatus() public onlyOwner {
     if (whitelistStatus == true){
       whitelistStatus = false;
       emit WhitelistStatusChanged(false);
