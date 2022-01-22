@@ -8,7 +8,7 @@
 ### Cycle and Deposit Duration:<br>
 The time management is dependent on **block.timestamp** and the variables cycleDuration and depositDuration are also denominated on seconds.<br>
 Keep that in mind, when deploying the contract with a depositDuration, and when creating new Pools.<br>
-> ### Example:<br>
+>### Example:<br>
 > depositDuration = 86400 => one day time span for deposits and withdraws<br>
 > cycleDuration = 604800 => one week locking period for the pool
 
@@ -20,9 +20,15 @@ You can convert UNIX timestamps to dates and the other way around [here](https:/
 > startOfDeposit = 1672531200 => deposits will open on the 01.01.2023.
 
 ## Calculating Rewards:
-Important variables of the pool struct to calculate the rewards: tokenPerShareMultiplier
+Important variables of the pool struct to calculate the rewards: tokenPerShareMultiplier<br>
 The calculation of rewards is done by assigning each deposit an amount of shares and then multiplying the tokenPerShare property of the pool<br>
 by the tokenPerShareMultiplier once during the locking Period. This makes compounding interest possible without any extra transactions. <br>
 Since the EVM does not handle floating values, we use basis points to achieve acceptable precision when converting shares <=> tokens<br>
 and when updating tokenPerShare.<br>
-
+The initial tokenPerShare value must always be exactly 10000, which represents a 1 in basis points.<br>
+The tokenPerShareMultiplier decimal value must be multiplied with 10000 to be used.<br>
+>### Example:
+> tokenPerShare = 10000 => 1 share is worth 1 token.<br>
+> tokenPerShare = 20000 => 1 share is worth 2 tokens.<br>
+> tokenPerShareMultiplier = 10000 => share value will not change<br>
+> tokenPerShareMultiplier = 15000 => share value will increase by 50% <br>
