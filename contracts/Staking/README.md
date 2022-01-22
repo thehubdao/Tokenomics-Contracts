@@ -32,3 +32,11 @@ The tokenPerShareMultiplier decimal value must be multiplied with 10000 to be us
 > tokenPerShare = 20000 => 1 share is worth 2 tokens.<br>
 > tokenPerShareMultiplier = 10000 => share value will not change<br>
 > tokenPerShareMultiplier = 15000 => share value will increase by 50% <br>
+
+relevant code snippets (basisPoints = 10000):<br>
+updatePool():<br>
+<code> tokenPerShare = tokenPerShare * tokenPerShareMultiplier / basisPoints </code><br>
+sharesToToken(): <br>
+<code> _sharesAmount * pool[_pool].tokenPerShare / basisPoints </code><br>
+tokenToShares(): <br>
+<code>_tokenAmount * basisPoints / pool[_pool].tokenPerShare</code>
