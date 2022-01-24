@@ -74,8 +74,10 @@ contract LockedStakingRewards is Ownable {
         assembly {
             _pool := mload(add(data, 0x20))
         }
+        require(_sender != address(0), "cannot deposit for 0 address");
+        require(_amount != 0, "cannot deposit 0 tokens");
         require(isTransferPhase(_pool), "pool is locked currently");
-
+    
         require(stakeToken.transferFrom(_sender, address(this), _amount), "token transfer failed, check your balance");
         _shares[_sender][_pool] += _amount * basisPoints / pool[_pool].tokenPerShare;
         emit Staked(_sender, _pool, _amount);
