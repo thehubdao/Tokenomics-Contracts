@@ -41,7 +41,8 @@ contract LockedStakingRewards is Ownable {
     mapping(address => mapping(uint256 => uint256)) private _shares;
 
     // creates the initial pools and transfers ownership to the production wallet
-    constructor(Pool[] memory _initialPools) {
+    constructor(Pool[] memory _initialPools) 
+        require(_initialPools.length < {
         for (uint256 i = 0; i < _initialPools.length; i++) {
             createPool(i, _initialPools[i]);
         }
@@ -73,9 +74,11 @@ contract LockedStakingRewards is Ownable {
         assembly {
             _pool := mload(add(data, 0x20))
         }
+        require(_sender != address(0), "cannot deposit for 0 address");
+        require(_amount != 0, "cannot deposit 0 tokens");
         require(isTransferPhase(_pool), "pool is locked currently");
-
-        require(stakeToken.transferFrom(_sender, address(this), _amount));
+    
+        require(stakeToken.transferFrom(_sender, address(this), _amount), "token transfer failed, check your balance");
         _shares[_sender][_pool] += _amount * basisPoints / pool[_pool].tokenPerShare;
         emit Staked(_sender, _pool, _amount);
     }
@@ -90,7 +93,7 @@ contract LockedStakingRewards is Ownable {
 
         uint256 _tokenAmount = sharesToToken(_sharesAmount, _pool);
         _shares[msg.sender][_pool] -= _sharesAmount;
-        require(stakeToken.transfer(msg.sender, _tokenAmount));
+        require(stakeToken.transfer(msg.sender, _tokenAmount), "token transfer failed, check token contract requirements");
         emit Unstaked(msg.sender, _pool, _tokenAmount);
     }
 
@@ -118,6 +121,8 @@ contract LockedStakingRewards is Ownable {
     */
     function updateTokenPerShareMultiplier(uint256 _pool, uint256 newTokenPerShareMultiplier) external onlyOwner {
         require(isTransferPhase(_pool), "pool only updateable during transfer phase");
+        require(!pool[_pool].isTerminated, "cannot modify terminated pool");
+        require(newTokenPerShareMultiplier >= basisPoints, "rewards cannot be negative");
         pool[_pool].tokenPerShareMultiplier = newTokenPerShareMultiplier;
     }
 
@@ -127,6 +132,7 @@ contract LockedStakingRewards is Ownable {
     * @dev gives the owner superpowers
     */
     function terminatePool(uint256 _pool) public onlyOwner {
+        require(!pool[_pool].isTerminated, "already terminated");
         pool[_pool].isTerminated = true;
         emit PoolKilled(_pool);
     }
@@ -137,6 +143,15 @@ contract LockedStakingRewards is Ownable {
     */
     function createPool(uint256 _pool, Pool memory pool_) public onlyOwner {
         require(pool[_pool].cycleDuration == 0, "cannot override an existing pool");
+        require(!pool_.isTerminated, "pool already terminated");
+        // check that cycle duration is not 0 and not extremely big by accident
+        require(
+            pool_.cycleDuration != 0 && pool_.cycleDuration < 153792000, 
+            "cycleDuration must be positive and less than 5 years"
+        );
+        require(pool_.startOfDeposit > block.timestamp, "deposit must start in future");
+        require(pool_.tokenPerShare == basisPoints, "shares:token => 1:1");
+        require(pool_.tokenPerShareMultiplier >= basisPoints, "reward cannot be negative");
         pool[_pool] = pool_;
         emit PoolUpdated(_pool, pool[_pool].startOfDeposit, pool[_pool].tokenPerShare);
     }
