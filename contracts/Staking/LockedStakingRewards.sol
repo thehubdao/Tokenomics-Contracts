@@ -41,8 +41,8 @@ contract LockedStakingRewards is Ownable {
     mapping(address => mapping(uint256 => uint256)) private _shares;
 
     // creates the initial pools and transfers ownership to the production wallet
-    constructor(Pool[] memory _initialPools) 
-        require(_initialPools.length < {
+    constructor(Pool[] memory _initialPools) {
+        require(_initialPools.length < 25, "setup fewer initial pools to avoid running out of gas");
         for (uint256 i = 0; i < _initialPools.length; i++) {
             createPool(i, _initialPools[i]);
         }
