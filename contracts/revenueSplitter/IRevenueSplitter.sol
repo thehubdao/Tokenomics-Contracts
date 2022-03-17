@@ -18,28 +18,22 @@ interface IRevenueSplitter {
     /// @dev reverts if token has no swapping path defined (`_swappingPaths[token]`)
     function distributeSingle(address token) external;
 
+    /// @dev distributes all base tokens to the baseTokenReceivers
     function distributeBaseToken() external;
 
     //// owner functionality ////
     function addRawTokenReceiver(Shareholder memory shareholder) external;
-
     function addBaseTokenReceiver(Shareholder memory shareholder) external;
-
     function updateRawTokenReceiver(uint256 index, Shareholder memory shareholder) external;
-    
     function updateBaseTokenReceiver(uint256 index, Shareholder memory shareholder) external;
-
     function removeRawTokenReceiver(uint256 index) external;
-
     function removeBaseTokenReceiver(uint256 index) external;
-
+    /// @dev set the uniswap swapping path for token => baseToken
     function setSwappingPath(address token, bytes memory path) external;
 
     //// view ////
 
     function balanceOfToken(address token) external view returns(uint256);
-
     function getAllBaseTokenReceiver() external view returns(Shareholder[] memory);
-
     function getAllRawTokenReceiver() external view returns(Shareholder[] memory);
 }
