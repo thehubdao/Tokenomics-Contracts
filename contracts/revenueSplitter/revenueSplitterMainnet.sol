@@ -7,15 +7,17 @@ import "@uniswap/v3-periphery/contracts/interfaces/ISwapRouter.sol";
 import "./IShareholder.sol";
 import "./ITokenController.sol";
 import "./IControlled.sol";
+import "./IWETH.sol";
 
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 
-contract RevenueSplitter is Ownable {
+contract RevenueSplitterWithController is Ownable {
     using SafeERC20 for IERC20;
 
     IERC20 public baseToken;
+    IWETH public immutable WETH; 
     ITokenController public baseTokenController;
 
     ISwapRouter public swapRouter;
@@ -36,6 +38,7 @@ contract RevenueSplitter is Ownable {
 
     constructor(
         address _baseToken,
+        address wrappedEth,
         Shareholder[] memory initialShareholders,
         bool[] memory isRawTokenReceiver,
         address[] memory tokens,
@@ -46,6 +49,7 @@ contract RevenueSplitter is Ownable {
         require(tokens.length == tokenPaths.length, "lengths invalid");
 
         baseToken = IERC20(_baseToken);
+        WETH = IWETH(wrappedEth);
         baseTokenController = ITokenController(IControlled(_baseToken).controller());
 
         swapRouter = ISwapRouter(0xE592427A0AEce92De3Edee1F18E0157C05861564);
@@ -65,7 +69,8 @@ contract RevenueSplitter is Ownable {
 
     /// @dev reverts on baseToken as input
     /// @dev reverts if token has no swapping path defined (`_swappingPaths[token]`)
-    function swapAndDistributeMany(IERC20[] memory tokens) public {
+    function swapAndDistributeMany(IERC20[] memory tokens, bool includeEth) public onlyOwner {
+        if(includeEth) WETH.deposit{ value: address(this).balance }();
         uint256 _totalShares = totalShares;
         uint256 rawTokenReceiverCount = rawTokenReceiver.length;
         for(uint256 i = 0; i < tokens.length; i++) {
@@ -97,7 +102,8 @@ contract RevenueSplitter is Ownable {
 
     /// @dev reverts on baseToken as input
     /// @dev reverts if token has no swapping path defined (`_swappingPaths[token]`)
-    function swapAndDistributeSingle(address token) public {
+    function swapAndDistributeSingle(address token) public onlyOwner {
+        if(token == address(WETH)) WETH.deposit{ value: address(this).balance }();
         uint256 balance = balanceOfToken(token);
         uint256 swapAmount = balance;
         require(balance != 0, "nothing to distribute");
@@ -256,6 +262,8 @@ contract RevenueSplitter is Ownable {
     function getRawTokenReceiver(uint256 index) public view returns(Shareholder memory) {
         return rawTokenReceiver[index];
     }
+
+    fallback() external payable {}
 
     //// EVENTS ////
 
