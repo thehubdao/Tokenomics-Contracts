@@ -8,18 +8,19 @@ import "./IShareholder.sol";
 import "./ITokenController.sol";
 import "./IControlled.sol";
 import "./IWETH.sol";
+import { IPolygonBridgeExit } from "./PolygonInterfaces.sol";
 
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 
-contract RevenueSplitterWithController is Ownable {
+contract RevenueSplitterWithController is OwnableUpgradeable {
     using SafeERC20 for IERC20;
 
     IERC20 public baseToken;
-    IWETH public immutable WETH; 
+    IWETH public WETH; 
     ITokenController public baseTokenController;
-
+    IPolygonBridgeExit internal polygonBridgeRoot;
     ISwapRouter public swapRouter;
     // path for uniswap trade as `bytes path` see ISwapRouter
     mapping(address => bytes) internal _swappingPaths;
@@ -36,23 +37,27 @@ contract RevenueSplitterWithController is Ownable {
         bool toBeNotified;
     }
 
-    constructor(
-        address _baseToken,
-        address wrappedEth,
+    constructor() initializer {}
+
+    function initialize(
+        IERC20 _baseToken,
+        IWETH wrappedEth,
+        ISwapRouter _swapRouter,
         Shareholder[] memory initialShareholders,
         bool[] memory isRawTokenReceiver,
         address[] memory tokens,
         bytes[] memory tokenPaths
-    )
-    {
+    ) initializer public {
         require(initialShareholders.length == isRawTokenReceiver.length, "lengths invalid");
         require(tokens.length == tokenPaths.length, "lengths invalid");
 
-        baseToken = IERC20(_baseToken);
-        WETH = IWETH(wrappedEth);
-        baseTokenController = ITokenController(IControlled(_baseToken).controller());
+        __Ownable_init();
 
-        swapRouter = ISwapRouter(0xE592427A0AEce92De3Edee1F18E0157C05861564);
+        baseToken = _baseToken;
+        WETH = wrappedEth;
+        baseTokenController = ITokenController(IControlled(address(_baseToken)).controller());
+
+        swapRouter = _swapRouter;
 
         for(uint256 i = 0; i < initialShareholders.length; i++) {
             if(isRawTokenReceiver[i]) {
@@ -161,6 +166,16 @@ contract RevenueSplitterWithController is Ownable {
         }
         emit TokensDistributed(address(_baseToken), block.timestamp);
     }
+
+    function burnTokensFromBridge(bytes[] memory proofs) public {
+        uint256 balanceBefore = baseToken.balanceOf(address(this));
+        for(uint256 i = 0; i < proofs.length; i++) {
+            polygonBridgeRoot.exit(proofs[i]);
+        }
+        uint256 burnAmount = baseToken.balanceOf(address(this)) - balanceBefore;
+        baseTokenController.burn(burnAmount);
+    }
+
     //// owner functionality ////
     function addRawTokenReceiver(Shareholder memory shareholder) public onlyOwner {
         require(shareholder.account != address(0), "raw receiver cannot be 0 address");

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity 0.8.0;
+pragma solidity ^0.8.0;
 
 //Flexible Vesting Schedule with easy Snapshot compatibility designed by Phil Thomsen @theDAC
 //for more information please visit: github.com
