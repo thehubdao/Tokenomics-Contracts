@@ -7,3 +7,17 @@ truffle-config.js
 .soliumignore
 scripts/
 .env
+contracts/roles/Untitled-1.js
+.gitignore
+flatten/Flattened.sol
+.gitignore
+contracts/ProxyClones/Proxy - Copy.sol
+contracts/revenueSplitter/PolygonInterfaces.sol
+contracts/revenueSplitter/revenueSplitterMainnet.sol
+contracts/revenueSplitter/RevenueSplitterPolygon.sol
+contracts/roles/AccessControlNFT.sol
+contracts/Staking/FlexibleStakingRewards.sol
+contracts/Staking/LockedStakingRewards.sol
+contracts/TokenManager/TokenManager.sol
+contracts/Vesting/Ivesting.sol
+contracts/Vesting/Vesting.sol
