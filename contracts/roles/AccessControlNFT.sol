@@ -22,8 +22,8 @@ contract AccessControlNFT is ERC721Upgradeable, OwnableUpgradeable, IAccessContr
 
     uint256 constant internal PERCENT = 100;
     uint256 constant internal BASIS_POINTS = 10_000;
-
     uint256 constant internal ORACLE_DECIMALS = 10 ** 8;
+    
     address internal _revenueSplitter;
     address internal _mghWMaticPair;
     uint256 internal _mghRebatePercentage;
@@ -128,13 +128,13 @@ contract AccessControlNFT is ERC721Upgradeable, OwnableUpgradeable, IAccessContr
             if(referralSig.length != 0) {
                 referrer = ECDSA.recover(referralMessageHash, referralSig);
 
-                require(_referralApplicable(referrer, user, referralBonusInUSD), "invalid referral");
+                require(_referralApplicable(referrer, referralBonusInUSD), "invalid referral");
                 referrerShare = referralBonusInUSD * BASIS_POINTS / amountToPayInUSD;
                 require(referrerShare < BASIS_POINTS, "referral unexpectedly big");
             } else {
                 amountToPayInUSD += referralBonusInUSD;
             }
-        }
+        } else { require(referralSig.length == 0, "can only use referral for first purchase"); }
 
         uint256 amountToPayInCurrency = amountToPayInUSD * ORACLE_DECIMALS * (10 ** currencyData.tokenDecimals) / _queryOracle(currencyData.oracle);
         uint256 referrerAmountInCurrency = referrerShare * amountToPayInCurrency / BASIS_POINTS;
@@ -395,6 +395,8 @@ contract AccessControlNFT is ERC721Upgradeable, OwnableUpgradeable, IAccessContr
         if(roleIndex == type(uint256).max) {
             require(params.intervals > 0, "amount to purchase cannot be 0");
 
+            if(balanceOf(params.recipient == 0)) _mint(recipient);
+
             user.indexByRole[params.roleId] = user.userRoleDataArray.length;
 
             uint40 expiration = uint40(params.intervals * role.intervalLength + block.timestamp);
@@ -469,8 +471,11 @@ contract AccessControlNFT is ERC721Upgradeable, OwnableUpgradeable, IAccessContr
         return uint256(price);
     }
 
-    function _referralApplicable(address referrer, User storage referred, uint256 referralBonus) internal view returns(bool) {
-        return _user[referrer].userRoleDataArray.length != 0 && referred.userRoleDataArray.length == 0 && referralBonus > 0 && !_isContract(referrer);
+    function _referralApplicable(address referrer, uint256 referralBonus) internal view returns(bool) {
+        // referrer != addresss(0) is implied by balanceOf(referrer) != 0;
+        return  balanceOf(referrer) != 0 &&
+                !_isContract(referrer);
+                referralBonus > 0 &&
     }
 
     function _isContract(address account) internal view returns(bool) {
