@@ -45,8 +45,10 @@ contract SimpleProxy is Proxy {
     }
 
     function appointNewUpgrader(address newUpgrader) public {
-        require(msg.sender == _getProxyStorage().upgrader, "msg.sender == upgrader");
-        _getProxyStorage().upgrader = newUpgrader;
+        ProxyStorage storage s = _getProxyStorage();
+
+        require(msg.sender == s.upgrader, "msg.sender == upgrader");
+        s.upgrader = newUpgrader;
     }
 
     function _isContract(address newImplementation) internal view returns(bool) {
