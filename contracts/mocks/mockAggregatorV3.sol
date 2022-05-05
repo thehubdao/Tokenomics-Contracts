@@ -1,9 +1,13 @@
-pragma solidity 0.8.0;
-
-import "../IFO/AggregatorV3Interface.sol";
+pragma solidity ^0.8.0;
 
 
 contract mockAggregatorV3 {
+
+  int256 immutable returnValue;
+
+  constructor(int256 currenyValueCents) {
+    returnValue = currenyValueCents * 10 ** 6;
+  }  
 
   function latestRoundData()
     external
@@ -16,6 +20,6 @@ contract mockAggregatorV3 {
       uint80 answeredInRound
   ) 
   {
-      return (0, 5000*10**8, 0, 0, 0);
+      return (uint80(0), returnValue, 0, 0, uint80(0));
   }
 }
