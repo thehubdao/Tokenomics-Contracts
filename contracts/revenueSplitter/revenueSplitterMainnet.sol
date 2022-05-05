@@ -33,7 +33,7 @@ contract RevenueSplitterWithController is OwnableUpgradeable {
 
     struct Shareholder {
         address account;
-        uint256 shares;
+        uint88 shares;
         bool toBeNotified;
     }
 
@@ -47,7 +47,7 @@ contract RevenueSplitterWithController is OwnableUpgradeable {
         bool[] memory isRawTokenReceiver,
         address[] memory tokens,
         bytes[] memory tokenPaths
-    ) initializer public {
+    ) public initializer {
         require(initialShareholders.length == isRawTokenReceiver.length, "lengths invalid");
         require(tokens.length == tokenPaths.length, "lengths invalid");
 
@@ -74,23 +74,26 @@ contract RevenueSplitterWithController is OwnableUpgradeable {
 
     /// @dev reverts on baseToken as input
     /// @dev reverts if token has no swapping path defined (`_swappingPaths[token]`)
-    function swapAndDistributeMany(IERC20[] memory tokens, bool includeEth) public onlyOwner {
-        if(includeEth) WETH.deposit{ value: address(this).balance }();
+    function swapAndDistributeMany(IERC20[] memory tokens) public onlyOwner {
         uint256 _totalShares = totalShares;
         uint256 rawTokenReceiverCount = rawTokenReceiver.length;
+        
         for(uint256 i = 0; i < tokens.length; i++) {
-            uint256 balance = tokens[i].balanceOf(address(this));
+            IERC20 token = tokens[i];
+            if(address(token) == address(WETH)) WETH.deposit{ value: address(this).balance }();
+
+            uint256 balance = token.balanceOf(address(this));
             uint256 swapAmount = balance;
             for(uint256 k = 0; k < rawTokenReceiverCount; k++) {
                 uint256 transferAmount = balance * rawTokenReceiver[k].shares / _totalShares;
-                tokens[i].safeTransfer(
+                token.safeTransfer(
                     rawTokenReceiver[k].account, 
                     transferAmount
                 );
                 if(rawTokenReceiver[k].toBeNotified) {
                     require(
                         IShareholder(rawTokenReceiver[k].account)
-                            .notifyShareholder(address(tokens[i]), transferAmount), 
+                            .notifyShareholder(address(token), transferAmount), 
                             "callback failed"
                     );
                 }
@@ -98,9 +101,9 @@ contract RevenueSplitterWithController is OwnableUpgradeable {
             }
             if(swapAmount == 0) continue;
             swapRouter.exactInput(
-                buildSwapParams(address(tokens[i]), swapAmount)
+                buildSwapParams(address(token), swapAmount)
             );
-            emit TokensDistributed(address(tokens[i]), block.timestamp);
+            emit TokensDistributed(address(token), block.timestamp);
         }
         distributeBaseToken();
     }
