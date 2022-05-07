@@ -5,9 +5,9 @@ pragma solidity ^0.8.0;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "../ProxyClones/OwnableForClones.sol";
 
-// Flexible Vesting Schedule with easy Snapshot compatibility
+// One schedule(duration, cliff, cliffDelay, exponent), one token, multiple beneficiaries
 
-contract DACVesting is OwnableForClones {
+contract VestingSingle is OwnableForClones {
 
   IERC20 public token;
   
