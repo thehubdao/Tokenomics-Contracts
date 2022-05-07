@@ -6,7 +6,7 @@ pragma solidity ^0.8.0;
 //for more information please visit: github.com
 
 
-interface Ivesting {
+interface IVestingSingle {
 
   /**
    * @notice initializes the contract, with all parameters set at once
