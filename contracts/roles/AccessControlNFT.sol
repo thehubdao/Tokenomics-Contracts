@@ -395,7 +395,7 @@ contract AccessControlNFT is ERC721Upgradeable, OwnableUpgradeable, IAccessContr
         if(roleIndex == type(uint256).max) {
             require(params.intervals > 0, "amount to purchase cannot be 0");
 
-            if(balanceOf(params.recipient == 0)) _mint(recipient);
+            if(balanceOf(params.recipient) == 0) _mint(params.recipient);
 
             user.indexByRole[params.roleId] = user.userRoleDataArray.length;
 
@@ -474,8 +474,8 @@ contract AccessControlNFT is ERC721Upgradeable, OwnableUpgradeable, IAccessContr
     function _referralApplicable(address referrer, uint256 referralBonus) internal view returns(bool) {
         // referrer != addresss(0) is implied by balanceOf(referrer) != 0;
         return  balanceOf(referrer) != 0 &&
-                !_isContract(referrer);
-                referralBonus > 0 &&
+                !_isContract(referrer) &&
+                referralBonus > 0;
     }
 
     function _isContract(address account) internal view returns(bool) {
