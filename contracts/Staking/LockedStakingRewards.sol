@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity 0.8.0;
+pragma solidity ^0.8.0;
 
 // We dont use Reentrancy Guard here because we only call the stakeToken contract which is assumed to be non-malicious
 import "@openzeppelin/contracts/access/Ownable.sol";
@@ -41,8 +41,8 @@ contract LockedStakingRewards is Ownable {
     mapping(address => mapping(uint256 => uint256)) private _shares;
 
     // creates the initial pools and transfers ownership to the production wallet
-    constructor(Pool[] memory _initialPools) 
-        require(_initialPools.length < {
+    constructor(Pool[] memory _initialPools) { 
+        require(_initialPools.length < 10, "too many pools");
         for (uint256 i = 0; i < _initialPools.length; i++) {
             createPool(i, _initialPools[i]);
         }

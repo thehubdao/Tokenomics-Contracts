@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: MIT
-
-import '@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol';
-import './Whitelist.sol';
+pragma solidity ^0.8.0;
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "./Whitelist.sol";
 // removed safeMath, see https://github.com/OpenZeppelin/openzeppelin-contracts/issues/2465
 
-pragma solidity "0.8.0";
 
 // @title IFOV3
-
 contract IFOV3 is Whitelist{
     using SafeERC20 for IERC20;
 
@@ -67,7 +65,7 @@ contract IFOV3 is Whitelist{
     // TimeLock ensures that users have enough time to harvest before Admin withdraws tokens,
     // sets new Start and EndBlocks or changes Pool specifications (~1e5 Blocks)
     modifier TimeLock() {
-        require(block.number > endBlock + 90000, 'Admin must wait before calling this function');
+        require(block.number > endBlock + 90000, "Admin must wait before calling this function");
     _;}
 
 
@@ -125,7 +123,7 @@ contract IFOV3 is Whitelist{
         if(_pid == 0){
           require(
             _poolInformation[_pid].offeringAmountPool >= (_poolInformation[_pid].totalAmountPool + (_amount)) * (_poolInformation[_pid].priceA),
-            'not enough Offering Tokens left in Pool1');
+            "not enough Offering Tokens left in Pool1");
         }
 
         // Transfers funds to this contract
@@ -257,7 +255,7 @@ contract IFOV3 is Whitelist{
         }
         //require that all offered tokens are in the contract
         require(sum <= offeringToken.balanceOf(address(this)),
-        'cant offer more than balance');
+        "cant offer more than balance");
 
         emit PoolParametersSet(_offeringAmountPool, _priceA, _priceB, _pid);
     }
@@ -426,7 +424,7 @@ contract IFOV3 is Whitelist{
      * @dev 100,000,000,000 means 0.1 (10%) / 1 means 0.0000000000001 (0.0000001%) / 1,000,000,000,000 means 1 (100%)
      * @param _user: user address
      * @param _pid: pool id
-     * @return it returns the user's share of pool
+     * @return it returns the user"s share of pool
      */
     function _getUserAllocationPool(address _user, uint8 _pid) internal view returns (uint256) {
         if (_poolInformation[_pid].totalAmountPool > 0) {

@@ -4,10 +4,10 @@ pragma solidity ^0.8.0;
 import "@uniswap/v3-periphery/contracts/interfaces/ISwapRouter.sol";
 
 // interface for callback on tokens sent
-import "./IShareholder.sol";
-import "./ITokenController.sol";
-import "./IControlled.sol";
-import "./IWETH.sol";
+import "./Interfaces/IShareholder.sol";
+import "./Interfaces/ITokenController.sol";
+import "./Interfaces/IControlled.sol";
+import "./Interfaces/IWETH.sol";
 import { IPolygonBridgeExit } from "./PolygonInterfaces.sol";
 
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
