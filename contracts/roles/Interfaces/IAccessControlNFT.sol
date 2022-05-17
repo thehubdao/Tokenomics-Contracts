@@ -5,7 +5,6 @@ interface IAccessControlNFT {
 
     struct User {
         UserRoleData[] userRoleDataArray;
-        uint256 referralCount;
         mapping(uint8 => uint256) indexByRole;
     }
     struct RoleData {
