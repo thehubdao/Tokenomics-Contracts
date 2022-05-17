@@ -6,7 +6,7 @@ import "./Interfaces/IVestingFlex.sol";
 
 /// @notice DO NOT SEND TOKENS TO THIS CONTRACT
 /// @title different schedules, different beneficiaries, one token
-contract VestingFlex is OwnableUpgradeable, IVestingFlex{
+contract VestingFlex is OwnableUpgradeable, IVestingFlex {
     using SafeERC20 for IERC20;
 
     string constant private ZERO_VALUE = "param is zero, when it should not";
@@ -31,8 +31,8 @@ contract VestingFlex is OwnableUpgradeable, IVestingFlex{
     /// @notice sends all vested tokens to the vesting who
     /// @notice call `getClaimableNow()` to see the amount of available tokens
     /// @param which index of the vesting that should be claimed. 0 in most cases
-    function retrieve(uint256 which) external override {
-        _retrieve(msg.sender, which);
+    function retrieve(uint256 which) external override returns(uint256) {
+        return _retrieve(msg.sender, which);
     }
 
 
@@ -73,7 +73,7 @@ contract VestingFlex is OwnableUpgradeable, IVestingFlex{
         uint128 amountBefore = vesting.vestedTotal;
 
         // we give what was already released to `who`
-        _retrieve(who, which);
+        uint256 claimed = _retrieve(who, which);
 
         require(vesting.revokable, "vesting non-revokable");
         require(amountToReduceTo >= vesting.claimedTotal, "cannot reduce, already claimed");
@@ -104,12 +104,12 @@ contract VestingFlex is OwnableUpgradeable, IVestingFlex{
         emit OwnerRevokeDisabled(who, which);
     }
 
-    function recoverWrongToken(address _token) external {
+    function recoverWrongToken(address _token) external onlyOwner {
         require(_token != token, "cannot retrieve vested token");
         if(_token == address(0)) {
-            owner().call{ value: address(this).balance }("");
+            msg.sender.call{ value: address(this).balance }("");
         } else {
-            _processPayment(address(this), owner(), IERC20(_token).balanceOf(address(this)));
+            _processPayment(address(this), msg.sender, IERC20(_token).balanceOf(address(this)));
         }
     }
 
@@ -117,22 +117,24 @@ contract VestingFlex is OwnableUpgradeable, IVestingFlex{
     //// INTERNAL ////
 
     /// @dev sends all claimable token in the vesting to `who` and updates vesting
-    function _retrieve(address who, uint256 which) internal {
+    function _retrieve(address who, uint256 which) internal returns(uint256) {
         _enforceVestingExists(who, which);
 
         Vesting storage vesting = _vestingsByUser[who][which];
         uint256 totalReleased = _releasedAt(vesting, block.timestamp);
         uint256 claimedTotalBefore = vesting.claimedTotal;
 
-        if(totalReleased <= claimedTotalBefore) {
-            if(msg.sender == owner()) return;
+        // check this to not block `reduceVesting()`
+        if(totalReleased < claimedTotalBefore) {
+            if(msg.sender == owner()) return 0;
             revert("already claimed");
         }
         uint256 claimable = totalReleased - claimedTotalBefore;
-        vesting.claimedTotal = uint128(claimedTotalBefore + claimable);
+        vesting.claimedTotal = uint128(totalReleased);
         _processPayment(address(this), who, claimable);
 
         emit Retrieved(who, claimable);
+        return claimable;
     }
 
     /// @dev pushes a new vesting in the Vestings array of recipient
@@ -147,13 +149,14 @@ contract VestingFlex is OwnableUpgradeable, IVestingFlex{
     }
 
     /// @dev throws if vesting parameters are 'nonsensical'
-    function _enforceVestingParams(address recipient, Vesting calldata vesting) internal pure {
+    function _enforceVestingParams(address recipient, Vesting calldata vesting) internal view {
         require(recipient != address(0), ZERO_VALUE);
 
         require(vesting.vestedTotal != 0, ZERO_VALUE);
         require(vesting.claimedTotal == 0, "claimed == 0");
         require(vesting.cliff <= PRECISISION, "cliff <= MAX_CLIFF");
         require(vesting.start > vesting.cliffDelay);
+        require(vesting.start + vesting.duration > block.timestamp, "end must be in future");
         if(vesting.cliff == 0) require(vesting.cliffDelay == 0);
     }
 
@@ -180,7 +183,7 @@ contract VestingFlex is OwnableUpgradeable, IVestingFlex{
         }
         return PRECISISION;
     }
-    
+
     ///@dev calculates the amount of tokens that can be retrieved at a given timestamp. 
     function _releasedAt(Vesting storage vesting, uint256 timestamp) internal view returns(uint256) {
         return _releasedFractionAt(vesting, timestamp) * uint256(vesting.vestedTotal) / PRECISISION;
@@ -207,15 +210,19 @@ contract VestingFlex is OwnableUpgradeable, IVestingFlex{
         return _vestingsByUser[who][which].claimedTotal;
     }
 
-    /// @return amount number of tokens that can be retrieved in the vesting at the moment
-    function getClaimableNow(address who, uint256 which) external view override returns(uint256) {
+    function getClaimableAtTimestamp(address who, uint256 which, uint256 when) public view override returns(uint256) {
         _enforceVestingExists(who, which);
 
-        uint256 released =  _releasedAt(_vestingsByUser[who][which], block.timestamp);
-        uint256 claimed = _vestingsByUser[who][which].claimedTotal;
-        return claimed > released ? 0 : released - claimed;
+        uint256 released =  _releasedAt(_vestingsByUser[who][which], when);
+        uint256 claimed  = _vestingsByUser[who][which].claimedTotal;
+        return claimed >= released ? 0 : released - claimed;
     }
-    
+
+    /// @return amount number of tokens that can be retrieved in the vesting at the moment
+    function getClaimableNow(address who, uint256 which) external view override returns(uint256) {
+        return getClaimableAtTimestamp(who, which, block.timestamp);
+    }
+
     /// @return numberOfVestings the amount of vestings `who` has
     /// @notice call `getVesting(who, x (x < numberOfVestings))` to see the details for each vesting
     function getNumberOfVestings(address who) external view override returns(uint256) {
