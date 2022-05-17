@@ -181,6 +181,25 @@ contract AccessControlNFT is ERC721Upgradeable, OwnableUpgradeable, IAccessContr
         }
     }
 
+    function revokeRoleAsOwner(address who, uint8 roleId) external onlyOwner {
+        User storage user = _user[who];
+
+        uint256 index = user.roleIndex(roleId);
+        require(index != type(uint256).max);
+
+        user.indexByRole[roleId] = 0;
+        
+        // cannot underflow bcs of `require(index != type(uint256).max);` 
+        uint256 lastIndex = user.userRoleDataArray.length - 1;
+
+        if(index != lastIndex) {
+            uint8 roleIdLastRole = user.userRoleDataArray[lastIndex].roleId;
+            user.userRoleDataArray[index] = user.userRoleDataArray[lastIndex];
+            user.indexByRole[roleIdLastRole] = index;
+        }
+        user.userRoleDataArray.pop();
+    }
+
 
     //// OWNER setter functions ////
 
