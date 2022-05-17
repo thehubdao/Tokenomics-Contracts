@@ -21,7 +21,7 @@ interface IVestingFlex  {
     }
 
     // beneficiary retrieve
-    function retrieve(uint256 which) external;
+    function retrieve(uint256 which) external returns(uint256);
 
     // OWNER
     function createVestings(address from, address[] calldata recipients, Vesting[] calldata vestings) external;
@@ -33,6 +33,7 @@ interface IVestingFlex  {
     function getReleasedAt(address who, uint256 which, uint256 timestamp) external view returns(uint256);
     function getReleased(address who, uint256 which) external view returns(uint256);
     function getClaimed(address who, uint256 which) external view returns(uint256);
+    function getClaimableAtTimestamp(address who, uint256 which, uint256 when) external view returns(uint256);
     function getClaimableNow(address who, uint256 which) external view returns(uint256);
     function getNumberOfVestings(address who) external view returns(uint256);
     function getVesting(address who, uint256 which) external view returns(Vesting memory);
