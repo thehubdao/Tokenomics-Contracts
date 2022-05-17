@@ -1,217 +1,275 @@
-// SPDX-License-Identifier: MIT
-
 pragma solidity ^0.8.0;
 
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "../ProxyClones/OwnableForClones.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "./Interfaces/IVestingFlex.sol";
 
-// One schedule(duration, cliff, cliffDelay, exponent), one token, multiple beneficiaries
+/// @notice DO NOT SEND TOKENS TO THIS CONTRACT
+/// @title different schedules, different beneficiaries, one token
+contract VestingFlex is Ownable {
+    using SafeERC20 for IERC20;
 
-contract VestingSingle is OwnableForClones {
-
-  IERC20 public token;
-  
-  // Blocktime when the release schedule starts
-  uint256 public startTime;
-
-  //everything is released once blocktime >= startTime + duration
-  uint256 public duration;
-
-  // 1= linear; 2 = quadratic etc.
-  uint256 public exp;
-
-  // cliff: 100 = 1%;
-  uint256 public cliff;
-  
-  // indicates how much earlier than startTime the cliff amount gets released
-  uint256 public cliffDelay;
-
-  // maps what each user has deposited total / gotten back out total; Deposit>=Drained at all times
-  mapping(address => uint256) private totalDeposit;
-  mapping(address => uint256) private drainedAmount;
-
-  event TokensDeposited(address indexed beneficiary, uint256 indexed amount);
-  event TokensRetrieved(address indexed beneficiary, uint256 indexed amount);
-  event VestingDecreased(address indexed beneficiary, uint256 indexed amount);
-
-  /**
-   * @notice initializes the contract, with all parameters set at once
-   * @param _token the only token contract that is accepted in this vesting instance
-   * @param _owner the owner that can call decreaseVesting, set address(0) to have no owner
-   * @param _cliffInTenThousands amount of tokens to be released ahead of startTime: 10000 => 100%
-   * @param _cliffDelayInDays the cliff can be retrieved this many days before StartTime of the schedule
-   * @param _exp this sets the pace of the schedule. 0 is instant, 1 is linear over time, 2 is quadratic over time etc.
-   */
-  function initialize
-   (
-    address _token,
-    address _owner,
-    uint256 _startInDays,
-    uint256 _durationInDays,
-    uint256 _cliffInTenThousands,
-    uint256 _cliffDelayInDays,
-    uint256 _exp
-   )
-    external initializer
-   {
-    __Ownable_init();
-    token = IERC20(_token);
-    startTime = block.timestamp + _startInDays * 86400;
-    duration = _durationInDays * 86400;
-    cliff = _cliffInTenThousands;
-    cliffDelay = _cliffDelayInDays * 86400;
-    exp = _exp;
-    if (_owner == address(0)) {
-      renounceOwnership();
-    }else {
-      transferOwnership(_owner);
+    struct Vesting {
+        uint128 vested;
+        uint128 claimed;
+        uint256 rewardsClaimed;
     }
-  }
 
-  /**
-  * @notice same as depositFor but with memory array as input for gas savings
-  */
-  function depositForCrowd(address[] memory _recipient, uint256[] memory _amount) external {
-    require(_recipient.length == _amount.length, "lengths must match");
-    for (uint256 i = 0; i < _recipient.length; i++) {
-      _rawDeposit(msg.sender, _recipient[i], _amount[i]);    
+    uint256 public immutable START;
+    uint256 public immutable DURATION;
+    uint256 public immutable CLIFF;          // % of tokens to be released ahead of startTime: 1_000_000_000 => 100%
+    uint256 public immutable CLIFF_DELAY;     // the cliff can be retrieved this many seconds before StartTime of the schedule
+    uint256 public immutable EXP;        // exponent, form of the release, 0 => instant, when timeestmp == `end`; 1 => linear; 2 => quadratice etc.
+    bool public adminCanRevokeGlobal = true;
+
+
+    string constant private ZERO_VALUE = "param is zero, when it should not";
+    uint256 constant private PRECISISION = 1_000_000_000;
+    address public immutable token;
+
+    mapping(address => Vesting) private _vestingByUser;
+
+    uint128 vestedTotal;
+    uint128 claimedTotal;
+    uint256 rewardPool;
+
+    constructor(
+        address _token, 
+        address _owner,
+        uint256 _start,
+        uint256 _duration,
+        uint256 _cliff,
+        uint256 _cliffDelay,
+        uint256 _exp
+    ) {
+        token = _token;
+        START = _start;
+        DURATION = _duration;
+        CLIFF = _cliff;
+        CLIFF_DELAY = _cliffDelay;
+        EXP = _exp;
+        _transferOwnership(_owner);
     }
-  }
 
-  /**
-  * @notice sender can deposit tokens for someone else
-  * @param _recipient the use to deposit for 
-  * @param _amount the amount of tokens to deposit with all decimals
-  */
-  function depositFor(address _recipient, uint256 _amount) external {
-    _rawDeposit(msg.sender, _recipient, _amount);
-  }
+    //// USER ////
 
-  /**
-  * @notice deposits the amount owned by _recipient from sender for _recipient into this contract
-  * @param _recipient the address the funds are vested for
-  * @dev only useful in specific contexts like having to burn a wallet and deposit it back in the vesting contract e.g.
-  */
-  function depositAllFor(address _recipient) external {
-    _rawDeposit(msg.sender, _recipient, token.balanceOf(_recipient));
-  }
-
-  /**
-  * @notice user method to retrieve all that is retrievable
-  * @notice reverts when there is nothing to retrieve to save gas
-  */
-  function retrieve() external {
-    uint256 amount = getRetrievableAmount(msg.sender);
-    require(amount != 0, "nothing to retrieve");
-    _rawRetrieve(msg.sender, amount);
-  }
-
-  /**
-  * @notice retrieve for an array of addresses at once, useful if users are unable to use the retrieve method or to save gas with mass retrieves
-  * @dev does NOT revert when one of the accounts has nothing to retrieve
-  */
-  function retrieveFor(address[] memory accounts) external {
-    for (uint256 i = 0; i < accounts.length; i++) {
-      uint256 amount = getRetrievableAmount(accounts[i]);
-      _rawRetrieve(accounts[i], amount);
+    /// @notice sends all vested tokens to the vesting who
+    /// @notice call `getClaimableNow()` to see the amount of available tokens
+    function retrieve() external returns(uint256) {
+        return _retrieve(msg.sender);
     }
-  }
 
-  /**
-  * @notice if the ownership got renounced (owner == 0), then this function is uncallable and the vesting is trustless for benificiary
-  * @dev only callable by the owner of this instance
-  * @dev amount will be stuck in the contract and effectively burned
-  */
-  function decreaseVesting(address _account, uint256 amount) external onlyOwner {
-    require(drainedAmount[_account] <= totalDeposit[_account] - amount, "deposit has to be >= drainedAmount");
-    totalDeposit[_account] -= amount;
-    emit VestingDecreased(_account, amount);
-  }
+    function retrieveStakingRewards() external {
+        Vesting storage vest = _vestingByUser[msg.sender];
 
-  /**
-  * @return the total amount that got deposited for _account over the whole lifecycle with all decimal places
-  */
-  function getTotalDeposit(address _account) external view returns(uint256) {
-    return totalDeposit[_account];
-  }
+        uint256 rewardForUser = rewardPool * vest.vested / vestedTotal - vest.rewardsClaimed;
 
-  /** 
-  * @return the amount of tokens still in vesting for _account
-  */
-  function getTotalVestingBalance(address _account) external view returns(uint256) {
-    return totalDeposit[_account] - drainedAmount[_account];
-  }
-
-  /**
-  * @return the percentage that is retrievable, 100 = 100%
-  */
-  function getRetrievablePercentage() external view returns(uint256) {
-    return _getPercentage() / 100;
-  }
-
-  /**
-  * @notice useful for easy snapshot implementation
-  * @return the balance of token for this account plus the amount that is still vested for account
-  */
-  function balanceOf(address account) external view returns(uint256) {
-    return token.balanceOf(account) + totalDeposit[account] - drainedAmount[account];
-  }
-
-  /**
-  * @return the amount that _account can retrieve at that block with all decimals
-  */
-  function getRetrievableAmount(address _account) public view returns(uint256) {
-    if(_getPercentage() * totalDeposit[_account] / 1e4 > drainedAmount[_account]) {
-      return (_getPercentage() * totalDeposit[_account] / 1e4) - drainedAmount[_account];
-    }else {
-      return 0;
+        vest.rewardsClaimed += rewardForUser;
+        _processPayment(address(this), msg.sender, rewardForUser);
     }
-  }
 
-  function _rawDeposit(address _from, address _for, uint256 _amount) private {
-    require(token.transferFrom(_from, address(this), _amount));
-    totalDeposit[_for] += _amount;
-    emit TokensDeposited(_for, _amount);
-  }
 
-  function _rawRetrieve(address account, uint256 amount) private {
-    drainedAmount[account] += amount;
-    token.transfer(account, amount);
-    assert(drainedAmount[account] <= totalDeposit[account]);
-    emit TokensRetrieved(account, amount);
-  }
+    //// OWNER ////
 
-  /**
-  * @dev the core calculation method
-  * @dev returns 1e4 for 100%; 1e3 for 10%; 1e2 for 1%; 1e1 for 0.1% and 1e0 for 0.01%
-  */
-  function _getPercentage() private view returns(uint256) {
-    if (cliff == 0) {
-      return _getPercentageNoCliff();
-    }else {
-      return _getPercentageWithCliff();
+    /// @notice create multiple vestings at once for different beneficiaries
+    /// @param patron the one paying for the Vestings 
+    /// @param beneficiaries the recipients of `vestings` in the same order
+    /// @param vestings the vesting schedules in order for recipients
+    function createVestings(address patron, address[] calldata beneficiaries, Vesting[] calldata vestings) external onlyOwner {
+        require(beneficiaries.length == vestings.length, "length mismatch");
+
+        uint256 totalAmount;
+        for(uint256 i = 0; i < vestings.length; i++) {
+            address who = beneficiaries[i];
+            Vesting calldata vesting = vestings[i];
+
+            totalAmount += vesting.vested;
+            _setVesting(who, vesting);
+        }
+        _processPayment(patron, address(this), totalAmount);
+        vestedTotal += uint128(totalAmount);
     }
-  }
 
-  function _getPercentageNoCliff() private view returns(uint256) {
-    if (startTime > block.timestamp) {
-      return 0;
-    }else if (startTime + duration > block.timestamp) {
-      return (1e4 * (block.timestamp - startTime)**exp) / duration**exp;
-    }else {
-      return 1e4;
-    }
-  }
+    /// @notice reduces the vested amount and sends the difference in tokens to `tokenReceiver`
+    /// @param who address that the tokens are vested for
+    /// @param amountToReduceTo new total amount for the vesting
+    /// @param tokenReceiver address receiving the tokens that are not needed for vesting anymore
+    function reduceVesting(
+        address who, 
+        uint128 amountToReduceTo, 
+        address tokenReceiver
+    ) external onlyOwner {
+        require(adminCanRevokeGlobal, "admin not allowed anymore");
 
-  function _getPercentageWithCliff() private view returns(uint256) {
-    if (block.timestamp + cliffDelay < startTime) {
-      return 0;
-    }else if (block.timestamp < startTime) {
-      return cliff;
-    }else if (1e4 * (block.timestamp - startTime)**exp / duration**exp + cliff < 1e4) {
-      return (1e4 * (block.timestamp - startTime)**exp / duration**exp) + cliff;
-    }else {
-      return 1e4;
+        Vesting storage vesting = _vestingByUser[who];
+        uint128 amountBefore = vesting.vested;
+
+        // we give what was already released to `who`
+        uint256 claimed = _retrieve(who);
+
+        require(amountToReduceTo >= vesting.claimed, "cannot reduce, already claimed");
+        require(amountBefore > amountToReduceTo, "must reduce");
+
+        vesting.vested = amountToReduceTo;
+
+        _processPayment(address(this), tokenReceiver, amountBefore - amountToReduceTo);
+
+        emit VestingReduced(who, amountBefore, amountToReduceTo);
     }
-  }
+
+    /// @notice when this function is called once, the owner of this
+    ///         contract cannot revoke vestings, once they are created
+    function disableOwnerRevokeGlobally() external onlyOwner {
+        require(adminCanRevokeGlobal);
+        adminCanRevokeGlobal = false;
+        emit OwnerRevokeDisabledGlobally(block.timestamp);
+    }
+
+    function recoverWrongToken(address _token) external onlyOwner {
+        require(_token != token, "cannot retrieve vested token");
+        if(_token == address(0)) {
+            msg.sender.call{ value: address(this).balance }("");
+        } else {
+            _processPayment(address(this), msg.sender, IERC20(_token).balanceOf(address(this)));
+        }
+    }
+
+
+    //// INTERNAL ////
+
+    /// @dev sends all claimable token in the vesting to `who` and updates vesting
+    function _retrieve(address who) internal returns(uint256) {
+        _enforceVestingExists(who);
+
+        Vesting storage vesting = _vestingByUser[who];
+        uint256 totalReleased = _releasedAt(vesting, block.timestamp);
+        uint256 claimedBefore = vesting.claimed;
+
+        // check this to not block `reduceVesting()`
+        if(totalReleased < claimedBefore) {
+            if(msg.sender == owner()) return 0;
+            revert("already claimed");
+        }
+        uint256 claimable = totalReleased - claimedBefore;
+        vesting.claimed = uint128(totalReleased);
+        claimedTotal += uint128(claimable);
+        _processPayment(address(this), who, claimable);
+
+        emit Retrieved(who, claimable);
+        return claimable;
+    }
+
+    /// @dev pushes a new vesting in the Vestings array of recipient
+    function _setVesting(address recipient, Vesting calldata vesting) internal {
+        _enforceVestingParams(recipient, vesting);
+        _vestingByUser[recipient] = vesting;
+        emit VestingCreated(recipient, vesting);
+    }
+
+    function _processPayment(address from, address to, uint256 amount) internal {
+        IERC20(token).safeTransferFrom(from, to, amount);
+    }
+
+    /// @dev throws if vesting parameters are 'nonsensical'
+    function _enforceVestingParams(address recipient, Vesting calldata vesting) internal view {
+        require(recipient != address(0), ZERO_VALUE);
+        require(recipient != address(this), "cannot vest for self");
+
+        require(vesting.vested != 0, ZERO_VALUE);
+        require(vesting.claimed == 0, "claimed == 0");
+    }
+
+    /// @dev throws if the vesting does not exist
+    function _enforceVestingExists(address who) internal view {
+        require(_vestingByUser[who].vested > 0, "vesting doesnt exist");
+    }
+
+    /// @dev calculates the fraction of the total amount that can be retrieved at a given timestamp. 
+    ///      Based on `PRECISION`
+    function _releasedFractionAt(uint256 timestamp, uint256 exponent) internal view returns(uint256) {
+        if(timestamp + CLIFF_DELAY < START) {
+            return 0;
+        }
+        if(timestamp < START) {
+            return CLIFF;
+        }
+        uint256 fraction = (PRECISISION * (timestamp - START) ** exponent) / (uint256(DURATION) ** exponent) + CLIFF;
+        if (fraction < PRECISISION) {
+            return fraction;
+        }
+        return PRECISISION;
+    }
+
+    ///@dev calculates the amount of tokens that can be retrieved at a given timestamp. 
+    function _releasedAt(Vesting storage vesting, uint256 timestamp) internal view returns(uint256) {
+        return _releasedFractionAt(timestamp, EXP) * uint256(vesting.vested) / PRECISISION;
+    }
+
+
+    //// EXTERNAL VIEW ////
+
+    /// @return amount number of tokens that are released in the vesting at a given timestamp
+    function getReleasedAt(address who, uint256 timestamp) external view returns(uint256) {
+        _enforceVestingExists(who);
+        return _releasedAt(_vestingByUser[who], timestamp);
+    }
+
+    /// @return amount number of tokens that are released in the vesting at the moment
+    function getReleased(address who) external view returns(uint256) {
+        _enforceVestingExists(who);
+        return _releasedAt(_vestingByUser[who], block.timestamp);
+    }
+
+    /// @return amount number of tokens that were already retrieved in the vesting
+    function getClaimed(address who) external view returns(uint256) {
+        _enforceVestingExists(who);
+        return _vestingByUser[who].claimed;
+    }
+
+    function getClaimableAtTimestamp(address who, uint256 when) public view returns(uint256) {
+        _enforceVestingExists(who);
+
+        uint256 released =  _releasedAt(_vestingByUser[who], when);
+        uint256 claimed  = _vestingByUser[who].claimed;
+        return claimed >= released ? 0 : released - claimed;
+    }
+
+    /// @return amount number of tokens that can be retrieved in the vesting at the moment
+    function getClaimableNow(address who) external view returns(uint256) {
+        return getClaimableAtTimestamp(who, block.timestamp);
+    }
+
+    /// @param who beneficiary of the vesting
+    /// @notice check `getNumberOfVestings(who)` for the smallest out-of-bound `which`
+    function getVesting(address who) external view returns(Vesting memory) {
+        _enforceVestingExists(who);
+        return _vestingByUser[who];
+    }
+
+    function balanceOf(address who) external view returns(uint256 sum) {
+        Vesting storage vesting = _vestingByUser[who];
+        uint256 vested = vesting.vested;
+        uint256 claimed = vesting.claimed;
+
+        return vested > claimed ? vested - claimed : 0;
+    }
+
+    function stakeableBalance() external view returns(uint256) {
+        uint256 linearReleased = _releasedFractionAt(block.timestamp, 1);
+        uint256 actualReleased = _releasedFractionAt(block.timestamp, EXP);
+        if(linearReleased == 0) return 0;
+        if(actualReleased >= linearReleased) return 0;
+
+        return (linearReleased - actualReleased) * uint256(vestedTotal) / PRECISISION;
+    }
+
+    function notifyShareholder(address _token, uint256 amount) external {
+        require(token == _token, "wrong token received");
+        rewardPool += amount;
+    }
+
+    event VestingCreated(address indexed who, Vesting vesting);
+    event VestingReduced(address indexed who, uint256 amountBefore, uint256 amountAfter);
+    event Retrieved(address indexed who, uint256 amount);
+    event OwnerRevokeDisabledGlobally(uint256 indexed time);
 }
