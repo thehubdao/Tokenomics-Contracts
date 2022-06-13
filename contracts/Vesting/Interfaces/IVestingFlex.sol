@@ -25,7 +25,7 @@ interface IVestingFlex  {
 
     // OWNER
     function createVestings(address from, address[] calldata recipients, Vesting[] calldata vestings) external;
-    function reduceVesting(address who, uint256 which, uint128 amountToReduceTo, address tokenReceiver) external;
+    function reduceVesting(address who, uint256 which, uint128 amountToReduceTo, bool revokeComplete, address tokenReceiver) external;
     function disableOwnerRevokeGlobally() external;
     function disableOwnerRevoke(address who, uint256 which) external;
 
