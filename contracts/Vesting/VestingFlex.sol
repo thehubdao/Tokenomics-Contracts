@@ -9,19 +9,22 @@ import "./Interfaces/IVestingFlex.sol";
 contract VestingFlex is OwnableUpgradeable, IVestingFlex {
     using SafeERC20 for IERC20;
 
-    string constant private ZERO_VALUE = "param is zero, when it should not";
+    string constant private ZERO_VALUE_ERROR = "param is zero";
     uint256 constant private PRECISISION = 1_000_000_000;
     address public token;
 
-    bool public adminCanRevokeGlobal = true;
+    bool public adminCanRevokeGlobal;
 
     mapping(address => Vesting[]) private _vestingsByUser;
 
-    constructor() initializer {}
+    constructor() {
+        _disableInitializers();
+    }
 
     function initialize(address _token, address _owner) external initializer {
         __Ownable_init();
         token = _token;
+        adminCanRevokeGlobal = true;
         _transferOwnership(_owner);
     }
 
@@ -42,7 +45,11 @@ contract VestingFlex is OwnableUpgradeable, IVestingFlex {
     /// @param patron the one paying for the Vestings 
     /// @param beneficiaries the recipients of `vestings` in the same order
     /// @param vestings the vesting schedules in order for recipients
-    function createVestings(address patron, address[] calldata beneficiaries, Vesting[] calldata vestings) external override onlyOwner {
+    function createVestings(
+        address patron, 
+        address[] calldata beneficiaries, 
+        Vesting[] calldata vestings
+    ) external override onlyOwner {
         require(beneficiaries.length == vestings.length, "length mismatch");
 
         uint256 totalAmount;
@@ -64,26 +71,36 @@ contract VestingFlex is OwnableUpgradeable, IVestingFlex {
     function reduceVesting(
         address who, 
         uint256 which, 
-        uint128 amountToReduceTo, 
+        uint128 amountToReduceTo,
+        bool revokeComplete,
         address tokenReceiver
     ) external override onlyOwner {
-        require(adminCanRevokeGlobal, "admin not allowed anymore");
+        require(adminCanRevokeGlobal, "admin not allowed to revoke anymore");
 
         Vesting storage vesting = _vestingsByUser[who][which];
         uint128 amountBefore = vesting.vestedTotal;
 
         // we give what was already released to `who`
-        uint256 claimed = _retrieve(who, which);
+        _retrieve(who, which);
 
         require(vesting.revokable, "vesting non-revokable");
-        require(amountToReduceTo >= vesting.claimedTotal, "cannot reduce, already claimed");
-        require(amountBefore > amountToReduceTo, "must reduce");
 
+        if(revokeComplete) {
+            amountToReduceTo = vesting.claimedTotal;
+        } else {
+            require(amountToReduceTo >= vesting.claimedTotal, "cannot reduce, already claimed");
+        }
+
+        require(amountBefore > amountToReduceTo, "must reduce");
         vesting.vestedTotal = amountToReduceTo;
 
         _processPayment(address(this), tokenReceiver, amountBefore - amountToReduceTo);
 
         emit VestingReduced(who, which, amountBefore, amountToReduceTo);
+    }
+
+    function ownerRetrieveFor(address who, uint256 which) external onlyOwner {
+        require(_retrieve(who, which) != 0, "nothing to retrieve");
     }
 
     /// @notice when this function is called once, the owner of this
@@ -109,7 +126,7 @@ contract VestingFlex is OwnableUpgradeable, IVestingFlex {
         if(_token == address(0)) {
             msg.sender.call{ value: address(this).balance }("");
         } else {
-            _processPayment(address(this), msg.sender, IERC20(_token).balanceOf(address(this)));
+            IERC20(_token).safeTransfer(msg.sender, IERC20(_token).balanceOf(address(this)));
         }
     }
 
@@ -124,16 +141,21 @@ contract VestingFlex is OwnableUpgradeable, IVestingFlex {
         uint256 totalReleased = _releasedAt(vesting, block.timestamp);
         uint256 claimedTotalBefore = vesting.claimedTotal;
 
+
         // check this to not block `reduceVesting()`
         if(totalReleased < claimedTotalBefore) {
             if(msg.sender == owner()) return 0;
             revert("already claimed");
         }
-        uint256 claimable = totalReleased - claimedTotalBefore;
+
         vesting.claimedTotal = uint128(totalReleased);
+        
+        uint256 claimable = totalReleased - claimedTotalBefore;
         _processPayment(address(this), who, claimable);
+        /* IERC20(token).transfer(who, claimable); */
 
         emit Retrieved(who, claimable);
+
         return claimable;
     }
 
@@ -145,14 +167,19 @@ contract VestingFlex is OwnableUpgradeable, IVestingFlex {
     }
 
     function _processPayment(address from, address to, uint256 amount) internal {
-        IERC20(token).safeTransferFrom(from, to, amount);
+        if(amount == 0) return;
+        if(from == address(this)) {
+            IERC20(token).safeTransfer(to, amount);
+        } else {
+            IERC20(token).safeTransferFrom(from, to, amount);
+        }
     }
 
     /// @dev throws if vesting parameters are 'nonsensical'
     function _enforceVestingParams(address recipient, Vesting calldata vesting) internal view {
-        require(recipient != address(0), ZERO_VALUE);
+        require(recipient != address(0), ZERO_VALUE_ERROR);
 
-        require(vesting.vestedTotal != 0, ZERO_VALUE);
+        require(vesting.vestedTotal != 0, ZERO_VALUE_ERROR);
         require(vesting.claimedTotal == 0, "claimed == 0");
         require(vesting.cliff <= PRECISISION, "cliff <= MAX_CLIFF");
         require(vesting.start > vesting.cliffDelay);
@@ -176,7 +203,7 @@ contract VestingFlex is OwnableUpgradeable, IVestingFlex {
         if(timestamp < start) {
             return vesting.cliff;
         }
-        uint256 exp   = vesting.exp;
+        uint256 exp      = vesting.exp;
         uint256 fraction = (PRECISISION * (timestamp - start) ** exp) / (uint256(vesting.duration) ** exp)  + vesting.cliff;
         if (fraction < PRECISISION) {
             return fraction;
@@ -193,6 +220,7 @@ contract VestingFlex is OwnableUpgradeable, IVestingFlex {
     //// EXTERNAL VIEW ////
 
     /// @return amount number of tokens that are released in the vesting at a given timestamp
+
     function getReleasedAt(address who, uint256 which, uint256 timestamp) external view override returns(uint256) {
         _enforceVestingExists(who, which);
         return _releasedAt(_vestingsByUser[who][which], timestamp);
@@ -240,9 +268,7 @@ contract VestingFlex is OwnableUpgradeable, IVestingFlex {
     /// @return canRevoke false, when the admin cannot revoke the vesting, true otherwise
     function canAdminRevoke(address who, uint256 which) external view override returns(bool) {
         _enforceVestingExists(who, which);
-
-        if(!adminCanRevokeGlobal) return false;
-        return _vestingsByUser[who][which].revokable;
+        return adminCanRevokeGlobal && _vestingsByUser[who][which].revokable;
     }
 
     function balanceOf(address who) external view returns(uint256 sum) {
