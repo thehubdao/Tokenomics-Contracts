@@ -41,8 +41,8 @@ contract LockedStakingRewards is Ownable {
     mapping(address => mapping(uint256 => uint256)) private _shares;
 
     // creates the initial pools and transfers ownership to the production wallet
-    constructor(Pool[] memory _initialPools) { 
-        require(_initialPools.length < 10, "too many pools");
+    constructor(Pool[] memory _initialPools) {
+        require(_initialPools.length < 25, "setup fewer initial pools to avoid running out of gas");
         for (uint256 i = 0; i < _initialPools.length; i++) {
             createPool(i, _initialPools[i]);
         }
@@ -74,8 +74,10 @@ contract LockedStakingRewards is Ownable {
         assembly {
             _pool := mload(add(data, 0x20))
         }
+        require(_sender != address(0), "cannot deposit for 0 address");
+        require(_amount != 0, "cannot deposit 0 tokens");
         require(isTransferPhase(_pool), "pool is locked currently");
-
+    
         require(stakeToken.transferFrom(_sender, address(this), _amount), "token transfer failed, check your balance");
         _shares[_sender][_pool] += _amount * basisPoints / pool[_pool].tokenPerShare;
         emit Staked(_sender, _pool, _amount);
