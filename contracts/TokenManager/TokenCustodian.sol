@@ -2,26 +2,26 @@
 pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/access/AccessControlEnumerable.sol";
+import "@openzeppelin/contracts-upgradeable/access/AccessControlEnumerableUpgradeable.sol";
 import "../vesting/Interfaces/IVestingFlex.sol";
 
-contract TokenCustodian is AccessControlEnumerable {
+contract TokenCustodian is AccessControlEnumerableUpgradeable {
     using SafeERC20 for IERC20;
 
-    event Retrieved(Branch indexed branch, uint256 amount);
+    event Retrieved(Branch indexed branch, address indexed sender, address indexed beneficiary, uint256 amount);
+    event BeneficiaryConfigured(Branch indexed branch, address indexed beneficiary, uint256 limit, bool active);
 
-    IERC20 public TOKEN;
-    IVestingFlex public vest;
+    bytes32 public constant STRATEGIC_SALE_ROLE   = keccak256("STRATEGIC_SALE");
+    bytes32 public constant WORKING_GROUPS_ROLE   = keccak256("WORKING_GROUPS");
+    bytes32 public constant ECOSYSTEM_GRANTS_ROLE = keccak256("ECOSYSTEM_GRANTS");    
 
-    bytes32[3] private BRANCH_HASHES = [
-        keccak256("STRATEGIC_SALE"),
-        keccak256("WORKING_GROUPS"),
-        keccak256("ECOSYSTEM_GRANTS")
-    ];
+    IERC20 public immutable TOKEN;
+    IVestingFlex public immutable vest;
 
-    uint256 public immutable STRATEGIC_SALE_TOTAL = 1;
-    uint256 public immutable WORKING_GROUPS_TOTAL = 1;
-    uint256 public immutable ECOSYSTEM_GRANTS_TOTAL = 1;
+    uint256 public constant NUMBER_OF_BRANCHES = 3;
+
+    string public constant BRANCHES = 
+        "0: STRATEGIC_SALE \n 1: WORKING_GROUPS \n 2: ECOSYSTEM_GRANTS";
 
     enum Branch {
         STRATEGIC_SALE,
@@ -29,54 +29,123 @@ contract TokenCustodian is AccessControlEnumerable {
         ECOSYSTEM_GRANTS
     }
 
-    mapping(Branch => uint256) public balanceOfBranch;
-
-    constructor(
-        address admin
-    ) {
-        _setupRole(DEFAULT_ADMIN_ROLE, admin);
+    struct BranchProps {
+        Branch index;
+        string name;
+        uint256 initialTotalAllocation;
+        bytes32 role;
+        uint256 balance;
+        mapping(address => Beneficiary) beneficiary;
     }
 
-    function retrieve(Branch branch, uint256 amount, bool claimPending) external onlyRole(BRANCH_HASHES[uint256(branch)]) {
-        if(claimPending) {
-            uint256 claimed  = vest.retrieve(uint256(branch));
-            balanceOfBranch[branch] += claimed;
+    struct Beneficiary {
+        uint120 maxAmount;
+        uint120 claimedAmount;
+        bool isRegistered;
+    }
+
+    mapping(Branch => BranchProps) public branchByIndex;
+
+    constructor(IVestingFlex vestingContract) {
+        _disableInitializers();
+        vest = vestingContract;
+        TOKEN = IERC20(vestingContract.token());
+    }
+
+    function initialize(
+        address admin,
+        string[3] calldata branches
+    ) external initializer {
+        __AccessControlEnumerable_init();
+
+        _setupRole(DEFAULT_ADMIN_ROLE, admin);
+        for(uint256 i = 0; i < NUMBER_OF_BRANCHES; i++) {
+            BranchProps storage branch = branchByIndex[Branch(i)];
+            IVestingFlex.Vesting memory vesting = vest.getVesting(address(this), i);
+
+            require(vesting.vestedTotal != 0, "no vesting in place");
+
+            branch.index = Branch(i);
+            branch.name = branches[i];
+            branch.initialTotalAllocation = vesting.vestedTotal;
+            branch.role = keccak256(bytes(branches[i]));
+
+            require(
+                branch.role == STRATEGIC_SALE_ROLE || 
+                branch.role == ECOSYSTEM_GRANTS_ROLE || 
+                branch.role == WORKING_GROUPS_ROLE,
+                "role doesnt match constant role"
+            );
         }
-        balanceOfBranch[branch] -= amount;
-        _processPayment(address(this), msg.sender, amount);
-        emit Retrieved(branch, amount);
+    }
+
+    function retrieve(
+        Branch branch_,
+        address beneficiary_,
+        uint256 amount,
+        bool claimPending
+    ) external onlyRole(branchByIndex[branch_].role) {
+        BranchProps storage branch = branchByIndex[branch_];
+
+        _enforceBeneficiaryLimit(branch.beneficiary[beneficiary_], amount);
+
+        if(claimPending) {
+            uint256 claimed  = vest.retrieve(uint256(branch_));
+            branch.balance += claimed;
+        }
+
+        branch.balance -= amount;
+        _processPayment(beneficiary_, amount);
+        emit Retrieved(branch_, msg.sender, beneficiary_, amount);
+    }
+
+    function configureBeneficiaryInBranch(
+        Branch branch_,
+        address beneficiary_,
+        uint256 maxAmount,
+        bool isRegistered
+    ) public onlyRole(DEFAULT_ADMIN_ROLE) {
+        Beneficiary storage beneficiary = branchByIndex[branch_].beneficiary[beneficiary_];
+
+        beneficiary.maxAmount = maxAmount > uint256(beneficiary.claimedAmount)
+            ? uint120(maxAmount)
+            : uint120(beneficiary.claimedAmount);
+
+        beneficiary.isRegistered = isRegistered;
+
+        emit BeneficiaryConfigured(branch_, beneficiary_, maxAmount, isRegistered);
     }
 
     /// VIEW
-    function totalAllocation(Branch branch) public pure returns(uint256) {
-        if(branch == Branch.STRATEGIC_SALE)   return STRATEGIC_SALE_TOTAL;
-        if(branch == Branch.WORKING_GROUPS)   return WORKING_GROUPS_TOTAL;
-        if(branch == Branch.ECOSYSTEM_GRANTS) return ECOSYSTEM_GRANTS_TOTAL;
-        return 0;
+    function totalAllocation(Branch branch) public view returns(uint256) {
+        return branchByIndex[branch].initialTotalAllocation;
     }
 
     function totalReserves(Branch branch) public view returns(uint256) {
-        return totalAllocation(branch) + balanceOfBranch[branch] - vest.getClaimed(address(this), uint256(branch));
+        return totalAllocation(branch) - totalUsedInBranch(branch);
     }
 
-    function totalUsedInBranch(Branch branch) external view returns(uint256) {
-        return vest.getClaimed(address(this), uint256(branch)) - balanceOfBranch[branch];
+    function totalUsedInBranch(Branch branch) public view returns(uint256) {
+        return vest.getClaimed(address(this), uint256(branch)) - branchByIndex[branch].balance;
     }
 
     function availableInBranch(Branch branch) public view returns(uint256) {
-        return balanceOfBranch[branch] + vest.getClaimableNow(address(this), uint256(branch));
+        return availableInBranchAtTimestamp(branch, block.timestamp);
     }
 
     function availableInBranchAtTimestamp(Branch branch, uint256 when) public view returns(uint256) {
-        return balanceOfBranch[branch] + vest.getClaimableAtTimestamp(address(this), uint256(branch), when);
-    }
-
-    function BRANCHES() external pure returns(uint256, string memory, uint256, string memory, uint256, string memory) {
-        return (0, "STRATEGIC_SALE", 1, "WORKING_GROUPS", 2, "ECOSYSTEM_GRANTS");
+        return branchByIndex[branch].balance + vest.getClaimableAtTimestamp(address(this), uint256(branch), when);
     }
 
     /// INTERNAL
-    function _processPayment(address from, address to, uint256 amount) internal {
-        TOKEN.safeTransferFrom(from, to, amount);
+    function _processPayment(address to, uint256 amount) internal {
+        TOKEN.safeTransfer(to, amount);
+    }
+
+    function _enforceBeneficiaryLimit(Beneficiary storage beneficiary, uint256 amount) internal {
+        uint256 claimedAfter = beneficiary.claimedAmount + amount;
+        require(beneficiary.isRegistered, "unkown beneficiary");
+        require(claimedAfter <= beneficiary.maxAmount, "no more limit");
+        beneficiary.claimedAmount = uint120(claimedAfter);
     }
 }

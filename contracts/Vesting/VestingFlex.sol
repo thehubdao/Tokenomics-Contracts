@@ -11,7 +11,7 @@ contract VestingFlex is OwnableUpgradeable, IVestingFlex {
 
     string constant private ZERO_VALUE_ERROR = "param is zero";
     uint256 constant private PRECISISION = 1_000_000_000;
-    address public token;
+    address internal token_;
 
     bool public adminCanRevokeGlobal;
 
@@ -23,7 +23,7 @@ contract VestingFlex is OwnableUpgradeable, IVestingFlex {
 
     function initialize(address _token, address _owner) external initializer {
         __Ownable_init();
-        token = _token;
+        token_ = _token;
         adminCanRevokeGlobal = true;
         _transferOwnership(_owner);
     }
@@ -122,7 +122,7 @@ contract VestingFlex is OwnableUpgradeable, IVestingFlex {
     }
 
     function recoverWrongToken(address _token) external onlyOwner {
-        require(_token != token, "cannot retrieve vested token");
+        require(_token != token_, "cannot retrieve vested token");
         if(_token == address(0)) {
             msg.sender.call{ value: address(this).balance }("");
         } else {
@@ -169,9 +169,9 @@ contract VestingFlex is OwnableUpgradeable, IVestingFlex {
     function _processPayment(address from, address to, uint256 amount) internal {
         if(amount == 0) return;
         if(from == address(this)) {
-            IERC20(token).safeTransfer(to, amount);
+            IERC20(token_).safeTransfer(to, amount);
         } else {
-            IERC20(token).safeTransferFrom(from, to, amount);
+            IERC20(token_).safeTransferFrom(from, to, amount);
         }
     }
 
@@ -277,5 +277,9 @@ contract VestingFlex is OwnableUpgradeable, IVestingFlex {
         for(uint256 i = 0; i < len; i++) {
             sum = sum + vestings[i].vestedTotal - vestings[i].claimedTotal;
         }
+    }
+
+    function token() external view override returns(address) {
+        return token_;
     }
 }

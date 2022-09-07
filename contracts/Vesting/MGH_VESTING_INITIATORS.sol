@@ -1,18 +1,23 @@
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.0.0;
 
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "./Interfaces/IVestingFlex.sol";
 
 /// @notice DO NOT SEND TOKENS TO THIS CONTRACT
-/// @title different schedules, different beneficiaries, one token
-contract VestingFlex is Ownable {
+contract MGH_VESTING_INITIATORS is Ownable {
     using SafeERC20 for IERC20;
 
     struct Vesting {
         uint128 vested;
         uint128 claimed;
-        uint256 rewardsClaimed;
+        uint256 lastRewardClaimed;
+    }
+
+    struct Staking {
+        uint128 reward;
+        uint128 claimed;
+        mapping(address => bool) claimedByRecipient;
     }
 
     uint256 public immutable START;
@@ -28,13 +33,16 @@ contract VestingFlex is Ownable {
     address public immutable token;
 
     mapping(address => Vesting) private _vestingByUser;
+    mapping(uint256 => Staking) private _stakingRewards;
 
     uint128 vestedTotal;
     uint128 claimedTotal;
-    uint256 rewardPool;
+    uint256 stakingDelay = 1 days;
+
+    address private _revenueSplitter;
 
     constructor(
-        address _token, 
+        address _token,
         address _owner,
         uint256 _start,
         uint256 _duration,
@@ -55,17 +63,32 @@ contract VestingFlex is Ownable {
 
     /// @notice sends all vested tokens to the vesting who
     /// @notice call `getClaimableNow()` to see the amount of available tokens
-    function retrieve() external returns(uint256) {
-        return _retrieve(msg.sender);
+    function retrieve() external {
+        _retrieve(msg.sender);
     }
 
-    function retrieveStakingRewards() external {
-        Vesting storage vest = _vestingByUser[msg.sender];
+    function retrieveStakingRewards(address recipient, uint256[] calldata timestamps) external {
+        uint256 userVestedAmount = _vestingByUser[recipient].vested;
+        uint256 totalVestedAmount = vestedTotal;
+        uint256 totalPayment;
+        for (uint256 i = 0; i < timestamps.length; i++) {
+            Staking storage stk  = _stakingRewards[timestamps[i]];
+            uint256 reward = stk.reward;
+            uint256 claimed = stk.claimed;
 
-        uint256 rewardForUser = rewardPool * vest.vested / vestedTotal - vest.rewardsClaimed;
+            require(block.timestamp > timestamps[i] + stakingDelay, "too early");
+            require(! stk.claimedByRecipient[recipient], "already claimed");
 
-        vest.rewardsClaimed += rewardForUser;
-        _processPayment(address(this), msg.sender, rewardForUser);
+            stk.claimedByRecipient[recipient] = true;
+            if(reward <= claimed) continue;
+
+            uint256 rewardForUser = reward * userVestedAmount / totalVestedAmount;
+            rewardForUser = (rewardForUser + claimed) > reward ? reward - claimed : rewardForUser;
+
+            totalPayment += rewardForUser;
+            stk.claimed = uint128(claimed + rewardForUser);
+        }
+        _processPayment(address(this), recipient, totalPayment);
     }
 
 
@@ -105,12 +128,13 @@ contract VestingFlex is Ownable {
         uint128 amountBefore = vesting.vested;
 
         // we give what was already released to `who`
-        uint256 claimed = _retrieve(who);
+        _retrieve(who);
 
         require(amountToReduceTo >= vesting.claimed, "cannot reduce, already claimed");
         require(amountBefore > amountToReduceTo, "must reduce");
 
         vesting.vested = amountToReduceTo;
+        vestedTotal = vestedTotal - amountBefore + amountToReduceTo;
 
         _processPayment(address(this), tokenReceiver, amountBefore - amountToReduceTo);
 
@@ -126,7 +150,7 @@ contract VestingFlex is Ownable {
     }
 
     function recoverWrongToken(address _token) external onlyOwner {
-        require(_token != token, "cannot retrieve vested token");
+        require(_token != token || claimedTotal == vestedTotal, "cannot retrieve vested token");
         if(_token == address(0)) {
             msg.sender.call{ value: address(this).balance }("");
         } else {
@@ -134,11 +158,19 @@ contract VestingFlex is Ownable {
         }
     }
 
+    function setRevenueSplitter(address revenueSplitter) external onlyOwner {
+        _revenueSplitter = revenueSplitter;
+    }
+
+    function setStakingDelay(uint256 delay) external onlyOwner {
+        stakingDelay = delay;
+    }
+
 
     //// INTERNAL ////
 
     /// @dev sends all claimable token in the vesting to `who` and updates vesting
-    function _retrieve(address who) internal returns(uint256) {
+    function _retrieve(address who) internal {
         _enforceVestingExists(who);
 
         Vesting storage vesting = _vestingByUser[who];
@@ -147,27 +179,34 @@ contract VestingFlex is Ownable {
 
         // check this to not block `reduceVesting()`
         if(totalReleased < claimedBefore) {
-            if(msg.sender == owner()) return 0;
+            if(msg.sender == owner()) return;
             revert("already claimed");
         }
+
         uint256 claimable = totalReleased - claimedBefore;
         vesting.claimed = uint128(totalReleased);
-        claimedTotal += uint128(claimable);
+        claimedTotal    += uint128(claimable);
+
         _processPayment(address(this), who, claimable);
 
         emit Retrieved(who, claimable);
-        return claimable;
     }
 
-    /// @dev pushes a new vesting in the Vestings array of recipient
+    /// @dev sets the vesting for recipient, can only be done once
     function _setVesting(address recipient, Vesting calldata vesting) internal {
+        require(_vestingByUser[recipient].vested == 0, "already has a vesting");
         _enforceVestingParams(recipient, vesting);
         _vestingByUser[recipient] = vesting;
         emit VestingCreated(recipient, vesting);
     }
 
     function _processPayment(address from, address to, uint256 amount) internal {
-        IERC20(token).safeTransferFrom(from, to, amount);
+        if(amount == 0) return;
+        if(from == address(this)) {
+            IERC20(token).safeTransfer(to, amount);
+        } else {
+            IERC20(token).safeTransferFrom(from, to, amount);
+        }
     }
 
     /// @dev throws if vesting parameters are 'nonsensical'
@@ -226,7 +265,7 @@ contract VestingFlex is Ownable {
         return _vestingByUser[who].claimed;
     }
 
-    function getClaimableAtTimestamp(address who, uint256 when) public view returns(uint256) {
+    function getClaimableAt(address who, uint256 when) public view returns(uint256) {
         _enforceVestingExists(who);
 
         uint256 released =  _releasedAt(_vestingByUser[who], when);
@@ -236,7 +275,7 @@ contract VestingFlex is Ownable {
 
     /// @return amount number of tokens that can be retrieved in the vesting at the moment
     function getClaimableNow(address who) external view returns(uint256) {
-        return getClaimableAtTimestamp(who, block.timestamp);
+        return getClaimableAt(who, block.timestamp);
     }
 
     /// @param who beneficiary of the vesting
@@ -264,12 +303,16 @@ contract VestingFlex is Ownable {
     }
 
     function notifyShareholder(address _token, uint256 amount) external {
+        require(msg.sender == _revenueSplitter);
         require(token == _token, "wrong token received");
-        rewardPool += amount;
+        _stakingRewards[block.timestamp].reward += uint128(amount);
+        emit StakingRewardsDistributed(amount, block.timestamp);
     }
 
     event VestingCreated(address indexed who, Vesting vesting);
     event VestingReduced(address indexed who, uint256 amountBefore, uint256 amountAfter);
     event Retrieved(address indexed who, uint256 amount);
     event OwnerRevokeDisabledGlobally(uint256 indexed time);
+
+    event StakingRewardsDistributed(uint256 amount, uint256 timestamp);
 }

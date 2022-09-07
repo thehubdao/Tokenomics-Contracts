@@ -1,4 +1,5 @@
-pragma solidity ^0.8.0;
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0.0;
 
 // interface for uniswap
 import "@uniswap/v3-periphery/contracts/interfaces/ISwapRouter.sol";
@@ -8,7 +9,7 @@ import "./Interfaces/IShareholder.sol";
 import "./Interfaces/ITokenController.sol";
 import "./Interfaces/IControlled.sol";
 import "./Interfaces/IWETH.sol";
-import { IPolygonBridgeExit } from "./PolygonInterfaces.sol";
+import { IPolygonBridgeExit } from "./Interfaces/PolygonInterfaces.sol";
 
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
@@ -17,11 +18,12 @@ import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 contract RevenueSplitterWithController is OwnableUpgradeable {
     using SafeERC20 for IERC20;
 
-    IERC20 public baseToken;
-    IWETH public WETH; 
+    IERC20 public immutable baseToken;
+    IWETH public immutable WETH; 
+    IPolygonBridgeExit public immutable polygonBridge;
+    ISwapRouter public immutable swapRouter;
+
     ITokenController public baseTokenController;
-    IPolygonBridgeExit internal polygonBridgeRoot;
-    ISwapRouter public swapRouter;
     // path for uniswap trade as `bytes path` see ISwapRouter
     mapping(address => bytes) internal _swappingPaths;
 
@@ -37,12 +39,19 @@ contract RevenueSplitterWithController is OwnableUpgradeable {
         bool toBeNotified;
     }
 
-    constructor() initializer {}
+    constructor(
+        IPolygonBridgeExit _polygonBridge, 
+        IWETH wrappedEth, 
+        IERC20 _baseToken, 
+        ISwapRouter _swapRouter
+    ) initializer {
+        WETH = wrappedEth;
+        baseToken = _baseToken;
+        swapRouter = _swapRouter;
+        polygonBridge = _polygonBridge;
+    }
 
     function initialize(
-        IERC20 _baseToken,
-        IWETH wrappedEth,
-        ISwapRouter _swapRouter,
         Shareholder[] memory initialShareholders,
         bool[] memory isRawTokenReceiver,
         address[] memory tokens,
@@ -53,18 +62,12 @@ contract RevenueSplitterWithController is OwnableUpgradeable {
 
         __Ownable_init();
 
-        baseToken = _baseToken;
-        WETH = wrappedEth;
-        baseTokenController = ITokenController(IControlled(address(_baseToken)).controller());
-
-        swapRouter = _swapRouter;
+        baseTokenController = ITokenController(IControlled(address(baseToken)).controller());
 
         for(uint256 i = 0; i < initialShareholders.length; i++) {
-            if(isRawTokenReceiver[i]) {
-                addRawTokenReceiver(initialShareholders[i]);
-                continue;
-            }
-            addBaseTokenReceiver(initialShareholders[i]);
+            isRawTokenReceiver[i]
+                ? addRawTokenReceiver(initialShareholders[i])
+                : addBaseTokenReceiver(initialShareholders[i]);
         }
 
         for(uint256 i = 0; i < tokens.length; i++) {
@@ -112,45 +115,55 @@ contract RevenueSplitterWithController is OwnableUpgradeable {
     /// @dev reverts if token has no swapping path defined (`_swappingPaths[token]`)
     function swapAndDistributeSingle(address token) public onlyOwner {
         if(token == address(WETH)) WETH.deposit{ value: address(this).balance }();
-        uint256 balance = balanceOfToken(token);
-        uint256 swapAmount = balance;
-        require(balance != 0, "nothing to distribute");
 
-        uint256 _totalShares = totalShares;
-        uint256 rawTokenReceiverCount = rawTokenReceiver.length;
+        (
+            uint256 _balance,
+            uint256 _totalShares,
+            uint256 _rawTokenReceiverCount
+        ) = (
+            balanceOfToken(token), totalShares, rawTokenReceiver.length
+        );
 
-        for(uint256 i = 0; i < rawTokenReceiverCount; i++) {
+        uint256 swapAmount = _balance;
+        require(_balance != 0, "nothing to distribute");
+
+        for(uint256 i = 0; i < _rawTokenReceiverCount; i++) {
             Shareholder storage shareholder = rawTokenReceiver[i];
-            uint256 transferAmount = balance * shareholder.shares / _totalShares;
+            uint256 transferAmount = _balance * shareholder.shares / _totalShares;
             IERC20(token).safeTransfer(shareholder.account, transferAmount);
             swapAmount -= transferAmount;
             if(shareholder.toBeNotified) {
-                require(
-                    IShareholder(shareholder.account)
-                        .notifyShareholder(address(token), transferAmount), 
-                    "callback failed"
-                );
+                _notifyShareholder(shareholder.account, token, transferAmount);
             }
         }
+        emit TokensDistributed(token, block.timestamp);
+
         // swap
         if(swapAmount == 0) return;
         swapRouter.exactInput(
             buildSwapParams(token, swapAmount)
         );
-        emit TokensDistributed(token, block.timestamp);
         distributeBaseToken();
     }
 
-    function distributeBaseToken() public {
-        IERC20 _baseToken = baseToken;
-        uint256 balance = _baseToken.balanceOf(address(this));
-        require(balance != 0, "nothing to distribute");
-        uint256 baseTokenReceiverCount = baseTokenReceiver.length;
-        uint256 _totalSharesBaseReceiver = totalSharesBaseReceiver;
 
-        for(uint256 i = 0; i < baseTokenReceiverCount; i++) {
+    function distributeBaseToken() public {
+        // copy to memory
+        (
+            IERC20 _baseToken,
+            uint256 _baseTokenReceiverCount,
+            uint256 _totalSharesBaseReceiver
+        ) = (
+            baseToken, getBaseTokenReceiverCount(), totalSharesBaseReceiver
+        );
+        uint256 balance = _baseToken.balanceOf(address(this));
+
+        require(balance != 0, "nothing to distribute");
+
+        for(uint256 i = 0; i < _baseTokenReceiverCount; i++) {
             Shareholder storage shareholder = baseTokenReceiver[i];
             uint256 transferAmount = balance * shareholder.shares / _totalSharesBaseReceiver;
+
             if(shareholder.account == address(0)) {
                 baseTokenController.burn(transferAmount);
                 continue;
@@ -160,11 +173,7 @@ contract RevenueSplitterWithController is OwnableUpgradeable {
                 transferAmount
             );
             if(shareholder.toBeNotified){
-                require(
-                    IShareholder(shareholder.account)
-                        .notifyShareholder(address(_baseToken), transferAmount),
-                    "callback failed"
-                );
+                _notifyShareholder(shareholder.account, address(_baseToken), transferAmount);
             }
         }
         emit TokensDistributed(address(_baseToken), block.timestamp);
@@ -173,10 +182,22 @@ contract RevenueSplitterWithController is OwnableUpgradeable {
     function burnTokensFromBridge(bytes[] memory proofs) public {
         uint256 balanceBefore = baseToken.balanceOf(address(this));
         for(uint256 i = 0; i < proofs.length; i++) {
-            polygonBridgeRoot.exit(proofs[i]);
+            polygonBridge.exit(proofs[i]);
         }
         uint256 burnAmount = baseToken.balanceOf(address(this)) - balanceBefore;
         baseTokenController.burn(burnAmount);
+    }
+
+    function _notifyShareholder(
+        address shareholder, 
+        address token, 
+        uint256 amount
+    ) internal {
+        require(
+            IShareholder(shareholder)
+                .notifyShareholder(token, amount), 
+            "shareholder notification failed"
+        );
     }
 
     //// owner functionality ////
@@ -202,7 +223,7 @@ contract RevenueSplitterWithController is OwnableUpgradeable {
     }
     
     function updateBaseTokenReceiver(uint256 index, Shareholder memory shareholder) public onlyOwner {
-        require(baseTokenReceiver.length > index, "raw receiver does not exist");
+        require(getBaseTokenReceiverCount() > index, "raw receiver does not exist");
         totalShares = totalShares + shareholder.shares - baseTokenReceiver[index].shares;
         totalSharesBaseReceiver = totalSharesBaseReceiver + shareholder.shares - baseTokenReceiver[index].shares;
         baseTokenReceiver[index] = shareholder;
@@ -224,7 +245,7 @@ contract RevenueSplitterWithController is OwnableUpgradeable {
         uint256 shares = baseTokenReceiver[index].shares;
         totalShares -= shares;
         totalSharesBaseReceiver -= shares;
-        uint256 lastIndex = baseTokenReceiver.length - 1;
+        uint256 lastIndex = getBaseTokenReceiverCount() - 1;
         if(index != lastIndex) {
             Shareholder memory lastShareholder = baseTokenReceiver[lastIndex];
             baseTokenReceiver[index] = lastShareholder;            

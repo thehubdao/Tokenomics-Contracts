@@ -26,7 +26,7 @@ import "./ERC1967Proxy_TUP.sol";
  * Our recommendation is for the dedicated account to be an instance of the {ProxyAdmin} contract. If set up this way,
  * you should think of the `ProxyAdmin` instance as the real administrative interface of your proxy.
  */
-contract TransparentUpgradeableProxy is ERC1967Proxy_TUP {
+contract TUP is ERC1967Proxy_TUP {
     /**
      * @dev Initializes an upgradeable proxy managed by `_admin`, backed by the implementation at `_logic`, and
      * optionally initialized with `_data` as explained in {ERC1967Proxy-constructor}.
