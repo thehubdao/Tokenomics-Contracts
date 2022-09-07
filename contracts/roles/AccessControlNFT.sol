@@ -1,94 +1,44 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.0.0;
 
 import "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
-import "../../node_modules/@uniswap/v2-core/contracts/interfaces/IUniswapV2Pair.sol";
+import "./Interfaces/IUniswapV2PairGetReserves.sol";
 
 import "./LibRoles.sol";
+import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
+import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import "@openzeppelin/contracts/utils/math/Math.sol";
 
-import "@openzeppelin/contracts-upgradeable/token/ERC721/ERC721Upgradeable.sol";
+import "./ERC721Trimmed.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 
-contract AccessControlNFT is ERC721Upgradeable, OwnableUpgradeable {
+contract AccessControlNFT is ERC721TrimmedUpgradeable, OwnableUpgradeable, IAccessControlNFT {
     using SafeERC20 for IERC20;
     using LibRoles for User;
     using LibRoles for RoleData;
+    using MerkleProof for bytes32[];
 
-    uint256 constant PERCENT = 100;
-
-    uint256 constant ORACLE_DECIMALS = 10 ** 8;
-
+    uint256 constant internal PERCENT = 100;
+    uint256 constant internal BASIS_POINTS = 10_000;
+    uint256 constant internal ORACLE_DECIMALS = 10 ** 8;
+    
     address internal _revenueSplitter;
-    address internal constant WMATIC_ADDRESS = 0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270;
     address internal _mghWMaticPair;
+    uint256 internal _mghRebatePercentage;
 
-    // signals whether the transfer is transferable, it is always mintable
-    bool internal _isTransferable;
+    bytes32 public referralMessageHash = ECDSA.toEthSignedMessageHash(bytes("MGH Roles Referral\nChain:137\nVersion: 1.0"));
 
-    struct User {
-        UserRoleData[] userRoleDataArray;
-        mapping(uint8 => uint256) indexByRole;
-    }
+    mapping(address => User) internal _user;
+    mapping(uint8 => RoleData) internal _roleData;
+    mapping(address => CurrencyData) internal _currencyData;
+    mapping(uint256 => Airdrop) internal _airdropById;
+    mapping(address => mapping(uint256 => bool)) internal _airdropClaimed;
 
-    struct RoleData {
-        // if false, the role cannot be purchased
-        bool isActive;
-        // amount of seconds per interval
-        uint40 intervalLength;  // => cannot be 0 !! => every role has some kind of time limit
-        // total calls per interval
-        uint40 callsPerInterval;  // => 0 means unlimited calls
-/*         uint40 maxCallsInAdvance; // the maximum amount of calls a user can book for this role */
-        uint16 maxIntervalsAtOnce;
-        uint8 maxRebate;
-        uint8 rebatePerInterval;
-        mapping(Tier => uint256) feeByTier;
-    }
-
-    enum Tier {
-        NO_TIER,
-        ONE,
-        TWO,
-        THREE,
-        FOUR,
-        FIVE,
-        SIX,
-        SEVEN,
-        EIGHT,
-        NINE,
-        TEN
-    }
-
-    struct UserRoleData {
-        uint8 role;
-        Tier tier;
-        uint40 expiration;
-        uint40 callsTotal;
-        uint40 callsUsedTotal;
-    }
-
-    struct CurrencyData {
-        AggregatorV3Interface oracle;
-        uint256 decimals;
-    }
-
-    struct RoleSetup {
-        uint8 roleId;
-        bool isActive;
-        uint40 intervalLength; 
-        uint40 callsPerInterval;
-        uint16 maxIntervalsAtOnce;
-        uint8 maxRebate;
-        uint8 rebatePerInterval;
-    }
-
-    mapping(address => User) _user;
-    mapping(uint8 => RoleData) _roleData;
-    mapping(address => CurrencyData) _currencyData;
-
-    modifier roleInitialized(uint8 roleId) {
-        require(_roleData[roleId].intervalLength != 0, "not setup yet");
+    // serves only as a sanity check
+    modifier isContract(address account) {
+        require(account.code.length > 0, "address should have code");
         _;
     }
 
@@ -101,112 +51,162 @@ contract AccessControlNFT is ERC721Upgradeable, OwnableUpgradeable {
         uint256[] memory feeByTier,
         address[] memory currencies,
         address revenueSplitter,
-        address mghWMaticPair
+        address mghWMaticPair,
+        uint256 mghRebate
     ) external initializer {
         __Ownable_init();
-        __ERC721_init("API", "API");
+        __ERC721_init("MGH_API", "MGH_API");
 
         setupRole(rolesSetupData, enabledTiers, feeByTier);
-        for(uint256 i = 0; i < currencies.length; i = i + 2) {
-            setCurrency(currencies[i], AggregatorV3Interface(currencies[i+1]));
-        }
-        _revenueSplitter = revenueSplitter;
-        _mghWMaticPair = mghWMaticPair;
-    }
 
-    function _mint(address recipient) internal {
-        _mint(recipient, (uint160(recipient)));
+        setMGHRebate(mghRebate);
+        setRevenueSplitter(revenueSplitter);
+        setMghPool(mghWMaticPair);
+
+        for(uint256 i = 0; i < currencies.length; i = i + 2) {
+            setCurrency(currencies[i], currencies[i+1]);
+        }
+
     }
 
     function purchaseRole(
-        address recipient,
-        uint8   roleId,
-        Tier    tier,
+        GiveRoleParams memory params,
         address currency,
-        uint40  intervals
-    ) public payable {
+        bytes memory referralSig
+    ) public payable override returns(uint256) {
 
-        RoleData storage roleData = _roleData[roleId];
-        User storage user = _user[recipient];
+        RoleData storage roleData = _roleData[params.roleId];
+        User storage user = _user[params.recipient];
         CurrencyData memory currencyData = _currencyData[currency];
 
-        uint256 userRoleIndex = user.roleIndex(roleId);
-        uint256 feeForTier = roleData.feeByTier[tier];
-        uint256 amountToPayInUSD = intervals * feeForTier;
+        uint256 roleIndex = user.roleIndex(params.roleId);
+        uint256 feeForTier = roleData.feeByTier[params.tier];
+        uint256 amountToPayInUSD = params.intervals * feeForTier;
 
+        require(roleData.isPurchaseable, "role not active");
         require(feeForTier != 0, "tier not active");
-        require(roleData.isActive, "role not active");
-        require(intervals <= roleData.maxIntervalsAtOnce, "too many intervals");
+        require(params.intervals <= roleData.maxIntervalsAtOnce, "too many intervals");
+        require(currencyData.oracle != address(0), "currency not accepted");
 
-        require(address(currencyData.oracle) != address(0), "currency not accepted");
-        if(msg.value > 0) require(currency == address(0), "for native token specify 0 address as currency");
-
-        // calculate fee: 
-        // if user doesnt have the role, push it in array, otherwise update it in storage
-        if (userRoleIndex == type(uint256).max) {
-            require(intervals > 0, "amount to purchase cannot be 0");
-
-            user.indexByRole[roleId] = user.userRoleDataArray.length;
-            user.addRole(
-                UserRoleData(
-                    roleId,
-                    tier,
-                    uint40(block.timestamp) + intervals * roleData.intervalLength,
-                    intervals * roleData.callsPerInterval,
-                    0
-                )
-            );
-        } else {
-            // if(! currentTier == tier)
-            // user already has the role, so we deduct from payment, 
-            // if new tier is lower and add upgrade fee, if new tier is higher
-            UserRoleData storage userRoleData = user.userRoleDataArray[userRoleIndex];
+        // calculate amountToPayInUSD change because of tiers: 
+        if(roleIndex != type(uint256).max) {
+            UserRoleData storage userRoleData = user.userRoleDataArray[roleIndex];
             uint256 intervalsLeft_100 = _intervalsLeft_100(roleData.intervalLength, userRoleData.expiration);
-            Tier currentTier = userRoleData.tier;
-            // case 1: user downgrades tier
-            if(currentTier > tier) {
-                // case 1.1: user downgrades tier
-                uint256 refundAmount = intervalsLeft_100 * (roleData.feeByTier[currentTier] - feeForTier) / PERCENT;
-                amountToPayInUSD = refundAmount >= amountToPayInUSD ? 0 : amountToPayInUSD - refundAmount;
+            Tier currentTier = userRoleData.tier;        
+            if (currentTier != params.tier && intervalsLeft_100 > 0) {
+                // user already has the role, so we deduct from payment,
+                // if new tier is lower and add upgrade fee, if new tier is higher
 
-            // case 2: user upgrades tier
-            } else {
-                amountToPayInUSD += intervalsLeft_100 * (feeForTier - roleData.feeByTier[currentTier]);
+                // case 1: user downgrades tier
+                if(currentTier > params.tier) {
+                    uint256 refundAmount = intervalsLeft_100 * (roleData.feeByTier[currentTier] - feeForTier) / PERCENT;
+                    amountToPayInUSD = refundAmount >= amountToPayInUSD ? 0 : amountToPayInUSD - refundAmount;
+                } 
+                // case 2: user upgrades tier
+                else {
+                    amountToPayInUSD += intervalsLeft_100 * (feeForTier - roleData.feeByTier[currentTier]) / PERCENT;
+                }
             }
-
-            // now update the user role data:
-            userRoleData.callsTotal += intervals * roleData.callsPerInterval;
-            userRoleData.expiration += intervals * roleData.intervalLength;
-            userRoleData.tier = tier;
         }
 
-        // check if rebate is applicable, if so, apply it with a maximum of `maxRebate`
-        if(intervals > 1 && roleData.rebatePerInterval != 0) {
-            uint256 rebatePercentage = intervals * uint256(roleData.rebatePerInterval);
-            rebatePercentage = rebatePercentage > roleData.maxRebate ? roleData.maxRebate : rebatePercentage;
-            amountToPayInUSD = amountToPayInUSD * (PERCENT - rebatePercentage) / PERCENT;
+        // apply rebate for mass purchase and then for paying with MGH in no particular order
+        // mass purchase rebate
+        if(params.intervals > 1 && roleData.rebatePerInterval != 0) {
+            uint256 rebatePercentage = Math.min(params.intervals * uint256(roleData.rebatePerInterval), roleData.maxRebate);
+            amountToPayInUSD = _applyPercentageRebate(amountToPayInUSD, rebatePercentage);
+        }
+        // rebate for MGH payment on the new value
+        if(address(currencyData.oracle) == _mghWMaticPair) {
+            amountToPayInUSD = _applyPercentageRebate(amountToPayInUSD, _mghRebatePercentage);
         }
 
-        uint256 amountToPayInCurrency = amountToPayInUSD * ORACLE_DECIMALS * currencyData.decimals / _getLatestPrice(currencyData.oracle);
+        // apply referral Logic, when you are referred by someone
+        uint256 referrerShare = 0;
+        address referrer;
+        if(balanceOf(params.recipient) == 0) {
+            uint256 referralBonusInUSD = roleData.referralBonusInUSD; 
+            // first time is more expensive to pay referrers, without messing up incentives
+            amountToPayInUSD += referralBonusInUSD;
 
-        if(balanceOf(recipient) == 0) _mint(recipient);
+            if(referralSig.length != 0) {
+                referrer = ECDSA.recover(referralMessageHash, referralSig);
 
-        if (_msgSender() == owner()) return;
+                require(_referralApplicable(referrer, referralBonusInUSD), "invalid referral");
+                referrerShare = referralBonusInUSD * BASIS_POINTS / amountToPayInUSD;
+                require(referrerShare < BASIS_POINTS, "referral unexpectedly big");
+            } else {
+                amountToPayInUSD += referralBonusInUSD;
+            }
+        } else { require(referralSig.length == 0, "can only use referral for first purchase"); }
 
-        if(currency == address(0)) {
-            require(msg.value >= amountToPayInCurrency, "not enough native currency sent");
-            _revenueSplitter.call{ value: address(this).balance }("");
-        } else {
-            IERC20(currency).safeTransferFrom(_msgSender(), _revenueSplitter, amountToPayInCurrency);
+        uint256 amountToPayInCurrency = amountToPayInUSD * ORACLE_DECIMALS * currencyData.tokenDecimals / _queryOracle(currencyData.oracle);
+        uint256 referrerAmountInCurrency = referrerShare * amountToPayInCurrency / BASIS_POINTS;
+
+        // process payments separately to avoid stack too deep error
+        _processPayment(currency, amountToPayInCurrency, referrerAmountInCurrency, referrer);
+
+        _giveRole(params, roleIndex);
+
+        return amountToPayInCurrency;
+    }
+
+    function claimAirdrop(address recipient, uint256 airdropId, bytes32[] memory proof) external {
+        Airdrop memory airdrop = _airdropById[airdropId];
+        User storage user = _user[recipient];
+
+        require(!_airdropClaimed[recipient][airdropId], "airdrop already claimed");
+        require(block.timestamp > airdrop.start && block.timestamp < airdrop.end && airdrop.root != bytes32(0), "airdrop not active");
+        if(airdrop.onlyFirstTimeRole) require(user.roleIndex(airdrop.roleId) == type(uint256).max, "only first time role");
+        if(airdrop.onlyFirstTime)     require(balanceOf(recipient) == 0, "only first time users");
+        require(proof.verify(airdrop.root, keccak256(abi.encodePacked(recipient))), "invalid proof");
+
+        _airdropClaimed[recipient][airdropId] = true;
+
+        GiveRoleParams memory params = GiveRoleParams(recipient, airdrop.roleId, airdrop.tier, airdrop.intervals);
+       _giveRole(params, user.roleIndex(airdrop.roleId));
+    }
+
+    function donateRolesAsOwner(
+        address[] memory recipients, 
+        uint8 roleId, 
+        Tier tier, 
+        uint40  intervals
+    )
+        public onlyOwner
+    {
+        uint256 recipientsCount = recipients.length;
+        for(uint256 i = 0; i < recipientsCount; i++) {
+            address recipient = recipients[i];
+            User storage user = _user[recipient];
+
+            uint256 roleIndex = user.roleIndex(roleId);
+            Tier betterTier = Tier(Math.max(uint256(tier), roleIndex == type(uint256).max ? 0 : uint256(user.userRoleDataArray[roleIndex].tier)));
+            GiveRoleParams memory params = GiveRoleParams(recipients[i], roleId, betterTier, intervals);
+            _giveRole(params, roleIndex);
         }
     }
 
-    function purchaseRoleForSelf(uint8 role, Tier tier, address currency, uint40 intervals) public {
-        purchaseRole(_msgSender(), role, tier, currency, intervals);
+    function revokeRoleAsOwner(address who, uint8 roleId) external onlyOwner {
+        User storage user = _user[who];
+
+        uint256 index = user.roleIndex(roleId);
+        require(index != type(uint256).max);
+
+        user.indexByRole[roleId] = 0;
+        
+        // cannot underflow bcs of `require(index != type(uint256).max);` 
+        uint256 lastIndex = user.userRoleDataArray.length - 1;
+
+        if(index != lastIndex) {
+            uint8 roleIdLastRole = user.userRoleDataArray[lastIndex].roleId;
+            user.userRoleDataArray[index] = user.userRoleDataArray[lastIndex];
+            user.indexByRole[roleIdLastRole] = index;
+        }
+        user.userRoleDataArray.pop();
     }
+                    
 
-
-    //// OWNER ////
+    //// OWNER setter functions ////
 
     function setupRole(
         RoleSetup memory roleSetup,
@@ -216,16 +216,17 @@ contract AccessControlNFT is ERC721Upgradeable, OwnableUpgradeable {
         RoleData storage role = _roleData[roleSetup.roleId];
 
         require(role.intervalLength == 0, "already setup");
-        require(roleSetup.intervalLength > 0 && roleSetup.maxIntervalsAtOnce > 0, "non zero param is given as 0");
+        require(roleSetup.intervalLength * roleSetup.maxIntervalsAtOnce > 0, "non zero param is given as 0");
         require(enabledTiers.length == feeByTier.length, "tier fees dont match");
-        require(roleSetup.maxRebate <= 100);
+        require(roleSetup.maxRebate <= PERCENT);
 
-        role.isActive           = roleSetup.isActive;
+        role.isPurchaseable     = roleSetup.isPurchaseable;
         role.callsPerInterval   = roleSetup.callsPerInterval;
         role.intervalLength     = roleSetup.intervalLength;
         role.maxIntervalsAtOnce = roleSetup.maxIntervalsAtOnce;
         role.maxRebate          = roleSetup.maxRebate;
         role.rebatePerInterval  = roleSetup.rebatePerInterval;
+        role.referralBonusInUSD = roleSetup.referralBonusInUSD;
 
         for(uint256 i = 0; i < enabledTiers.length; i++) {
             require(feeByTier[i] != 0, "fee cannot be 0");
@@ -235,46 +236,77 @@ contract AccessControlNFT is ERC721Upgradeable, OwnableUpgradeable {
         // emit
     }
 
-    function setFee(uint8 roleId, Tier tier, uint256 feeForTier) public onlyOwner roleInitialized(roleId) {
+    function setFee(uint8 roleId, Tier tier, uint256 feeForTier) public onlyOwner {
+        require(_isRoleInitialized(roleId));
+        require(tier != Tier.NO_TIER, "cannot set fee for NOTIER");
         _roleData[roleId].feeByTier[tier] = feeForTier;
     }
 
-    function setRoleStatus(uint8 roleId, bool isActive) public onlyOwner roleInitialized(roleId) {
-        require(isActive != _roleData[roleId].isActive, "already set");
-         _roleData[roleId].isActive = isActive;
+    function setRoleStatus(uint8 roleId, bool isPurchaseable) public onlyOwner {
+        require(_isRoleInitialized(roleId));
+        require(isPurchaseable != _roleData[roleId].isPurchaseable, "already set");
+         _roleData[roleId].isPurchaseable = isPurchaseable;
     }
 
     /// careful, the fee is per interval, so this might effectively change the price
-    function setIntervalLength(uint8 roleId, uint40 newIntervalLength) public onlyOwner roleInitialized(roleId) {
-        require(newIntervalLength != 0);
+    function setIntervalLength(uint8 roleId, uint40 newIntervalLength) public onlyOwner {
+        require(_isRoleInitialized(roleId));
+        require(newIntervalLength > 0);
         _roleData[roleId].intervalLength = newIntervalLength;
     }
 
-    function setCallsPerInterval(uint8 roleId, uint40 callsPerInterval) public onlyOwner roleInitialized(roleId) {
+    function setCallsPerInterval(uint8 roleId, uint40 callsPerInterval) public onlyOwner {
+        require(_isRoleInitialized(roleId));
         _roleData[roleId].callsPerInterval = callsPerInterval;
     }
 
-    function setMaxIntervalsAtOnce(uint8 roleId, uint16 newMaxIntervals) public onlyOwner roleInitialized(roleId) {
+    function setMaxIntervalsAtOnce(uint8 roleId, uint16 newMaxIntervals) public onlyOwner {
+        require(_isRoleInitialized(roleId));
         require(newMaxIntervals != 0);
         _roleData[roleId].maxIntervalsAtOnce = newMaxIntervals;
     }
 
-    function setRebate(uint8 roleId, uint8 rebatePerInterval, uint8 maxRebate) public onlyOwner roleInitialized(roleId) {
-        require(maxRebate <= 100);
-        RoleData storage role = _roleData[roleId];
-        role.rebatePerInterval = rebatePerInterval;
-        role.maxRebate = maxRebate;
+    function setRebate(uint8 roleId, uint8 rebatePerInterval, uint8 maxRebate) public onlyOwner {
+        require(_isRoleInitialized(roleId));
+        require(maxRebate <= PERCENT);
+        RoleData storage roleData = _roleData[roleId];
+        roleData.rebatePerInterval = rebatePerInterval;
+        roleData.maxRebate = maxRebate;
     }
 
-    function setCurrency(address currency, AggregatorV3Interface oracle) public onlyOwner {
-        require(_getLatestPrice(oracle) > 0, "oracle contract call failed");
-        uint256 decimals;
-        if(currency == address(0)) {
-            decimals = 10 ** 18;
-        } else {
-            decimals = 10 ** IERC20Metadata(currency).decimals();
-        }
-        _currencyData[currency] = CurrencyData(oracle, decimals);
+    function setReferralMessage(string memory newReferralMessage) external onlyOwner {
+        require(bytes(newReferralMessage).length != 0);
+        referralMessageHash = ECDSA.toEthSignedMessageHash(bytes(newReferralMessage));
+    }
+
+    function setReferralBonus(uint8 roleId, uint16 referralBonusInUSD) external onlyOwner {
+        _roleData[roleId].referralBonusInUSD = referralBonusInUSD;
+    }
+
+    function setCurrency(address currency, address oracle) public onlyOwner {
+        require(_queryOracle(oracle) > 0, "oracle contract call failed");
+        if(oracle != _mghWMaticPair) require(AggregatorV3Interface(oracle).decimals() == 8, "oracle decimals must be 8");
+        uint64 tokenDecimals = currency == address(0) ? 18 : IERC20Metadata(currency).decimals();
+        _currencyData[currency] = CurrencyData(oracle, uint64(10) ** tokenDecimals);
+    }
+
+    function registerAirdrop(uint256 airdropId, Airdrop memory airdrop) external onlyOwner {
+        Airdrop storage emptyAirdrop = _airdropById[airdropId];
+        require(emptyAirdrop.intervals == 0, "airdropId already used");
+        require(airdrop.intervals > 0, "airdrop needs interval");
+        require(airdrop.root != bytes32(0), "root not set");
+
+        _airdropById[airdropId] = airdrop;
+    }
+
+    function extendAirdrop(uint256 airdropId, bytes32 root, uint256 newEnd) external onlyOwner {
+        Airdrop storage airdrop = _airdropById[airdropId];
+
+        require(airdrop.intervals > 0, "airdrop not set");
+        require(airdrop.root != root, "root already set");
+
+        airdrop.root = root;
+        airdrop.end  = uint40(newEnd);
     }
 
     function setUsedCalls(address account, uint8 roleId, uint40 callsUsedTotal) public onlyOwner {
@@ -282,40 +314,52 @@ contract AccessControlNFT is ERC721Upgradeable, OwnableUpgradeable {
         _user[account].userRoleDataArray[index].callsUsedTotal = callsUsedTotal;
     }
 
-    function setTransferability(bool isTransferable) public onlyOwner {
-        require(isTransferable != _isTransferable, "already set");
-        _isTransferable = isTransferable;
-    }
-
-    function setRevenueSplitter(address revenueSplitter) public onlyOwner {
+    function setRevenueSplitter(address revenueSplitter) public onlyOwner isContract(revenueSplitter) {
         _revenueSplitter = revenueSplitter;
     }
 
-    function setMghPool(address pairContract) public onlyOwner {
+    function setMGHRebate(uint256 mghRebatePercentage) public onlyOwner {
+        require(mghRebatePercentage < PERCENT);
+        _mghRebatePercentage = mghRebatePercentage;
+    }
+
+    function setMghPool(address pairContract) public onlyOwner isContract(pairContract) {
         _mghWMaticPair = pairContract;
+    }
+
+    //// Owner Token Recovery////
+    function recoverToken(address token) external onlyOwner {
+        if(token == address(0)) {
+            msg.sender.call{ value: address(this).balance }("");
+        } else {
+            IERC20(token).safeTransfer(msg.sender, IERC20(token).balanceOf(address(this)));
+        }
     }
 
 
     //// VIEWS ////
 
-    function getRoleInfo(uint8 roleId) external view returns(bool isActive, uint40 intervalLength, uint40 callsPerInterval) {
+    function getRoleInfo(uint8 roleId) external view returns(bool isPurchaseable, uint40 intervalLength, uint40 callsPerInterval) {
         RoleData storage role = _roleData[roleId];
-        isActive = role.isActive;
+        isPurchaseable = role.isPurchaseable;
         intervalLength = role.intervalLength;
         callsPerInterval = role.callsPerInterval;
     }
 
-    function getTierInfo(uint8 roleId, Tier tier) external view returns(bool isActive, uint256 fee) {
+    function getTierInfo(uint8 roleId, Tier tier) external view returns(bool isPurchaseable, uint256 fee) {
         RoleData storage role = _roleData[roleId];
         fee = role.feeByTier[tier];
-        isActive = role.isActive && fee != 0;
+        isPurchaseable = role.isPurchaseable && fee != 0;
     }
 
+    function getCurrencyInfo(address currency) public view returns(CurrencyData memory) {
+        return _currencyData[currency];
+    }
 
-    function getUserRoleSingle(address account, uint8 roleId) external view returns(bytes32 ret) {
+    function getUserRoleSingle(address account, uint8 roleId) public view returns(bytes32 ret) {
         uint256 mapSlot;
         uint256 userRoleIndex = _user[account].roleIndex(roleId);
-        if(userRoleIndex == type(uint256).max) return bytes32(userRoleIndex);
+        if(userRoleIndex == type(uint256).max) return bytes32(type(uint256).max);
         assembly {
             mapSlot := _user.slot
         }
@@ -337,26 +381,98 @@ contract AccessControlNFT is ERC721Upgradeable, OwnableUpgradeable {
         assembly {
             length := sload(arrayLengthSlot)
         }
+        if(length == 0) return new bytes32[](1);
+        
         ret = new bytes32[](length);
         for(uint256 i = 0; i < length; i++) {
-            uint256 arrayElementSlot = firstElementSlot + i;
             bytes32 slotData;
             assembly {
-                slotData := sload(arrayElementSlot)
+                slotData := sload(add(firstElementSlot, i))
             }
             ret[i] = slotData;
         }
     }
 
-    function getNFTRolesComplete(uint256 tokenId) public view returns(UserRoleData[] memory) {
-        require(_exists(tokenId), "token not minted");
-        return _user[address(uint160(tokenId))].userRoleDataArray;
+    function getUserRoleSingleAsStruct(address account, uint8 roleId) public view returns(UserRoleData memory) {
+        uint256 userRoleIndex = _user[account].roleIndex(roleId);
+        if(userRoleIndex == type(uint256).max) return UserRoleData(roleId, Tier.NO_TIER, 0, 0, 0);
+
+        return _user[account].userRoleDataArray[userRoleIndex];
     }
 
-    function getCurrencyInfo(address currency) public view returns(CurrencyData memory) {
-        return _currencyData[currency];
+    function getUserRolesCompleteAsStruct(address account) public view returns(UserRoleData[] memory) {
+        return _user[account].userRoleDataArray;
     }
-    
+
+    // INTERNALS
+
+    function _mint(address recipient) internal {
+        _mint(recipient, (uint160(recipient)));
+    }
+
+    function _giveRole(GiveRoleParams memory params, uint256 roleIndex) internal {
+        require(params.recipient != address(0), "ZERO_ADDRESS");
+
+        User storage user = _user[params.recipient];
+        RoleData storage role = _roleData[params.roleId];
+
+        if(roleIndex == type(uint256).max) {
+            require(params.intervals > 0, "amount to purchase cannot be 0");
+
+            if(balanceOf(params.recipient) == 0) _mint(params.recipient);
+
+            user.indexByRole[params.roleId] = user.userRoleDataArray.length;
+
+            uint40 expiration = uint40(params.intervals * role.intervalLength + block.timestamp);
+            uint40 callsTotal = uint40(params.intervals * role.callsPerInterval);
+
+            user.userRoleDataArray.push(
+                UserRoleData(
+                    params.roleId,
+                    params.tier,
+                    expiration,
+                    callsTotal,
+                    0
+                )
+            );
+        }
+        else {
+            UserRoleData storage userRoleData = user.userRoleDataArray[roleIndex];
+
+            uint40 callsTotal = userRoleData.callsTotal + uint40(params.intervals * role.callsPerInterval);
+            uint40 expiration = uint40(Math.max(userRoleData.expiration, block.timestamp) + params.intervals * role.intervalLength);
+
+            userRoleData.callsTotal = callsTotal;
+            userRoleData.expiration = expiration;
+            userRoleData.tier = params.tier;
+        }
+        emit RoleChanged(params.recipient, getUserRoleSingle(params.recipient, params.roleId));
+    }
+
+    function _processPayment(address currency, uint256 amountToPayInCurrency, uint256 referrerAmountInCurrency, address referrer) internal {
+        if(currency == address(0)) {
+            require(msg.value >= amountToPayInCurrency, "not enough native currency sent");
+            _revenueSplitter.call{ value: amountToPayInCurrency - referrerAmountInCurrency }("");
+            // referrer can only be EOA, since we do not support EIP1271
+            if(referrerAmountInCurrency != 0) referrer.call{ value: referrerAmountInCurrency }("");
+            // refund native currency. Reentrancy to this contract is of no use for the user
+            msg.sender.call{ value: msg.value - amountToPayInCurrency }("");
+        } else {
+            require(msg.value == 0, "send either token or native");
+            IERC20(currency).safeTransferFrom(msg.sender, _revenueSplitter, amountToPayInCurrency - referrerAmountInCurrency);
+            if(referrerAmountInCurrency != 0) IERC20(currency).safeTransferFrom(msg.sender, referrer, referrerAmountInCurrency);
+        }
+    }
+
+    function _applyPercentageRebate(uint256 initialValue, uint256 percentage) internal pure returns(uint256) {
+        require(percentage <= PERCENT, "percentage out of bound");
+        return initialValue * (PERCENT - percentage) / PERCENT;
+    }
+
+    function _isRoleInitialized(uint8 roleId) internal view returns(bool) {
+        return _roleData[roleId].intervalLength != 0;
+    }
+
     function _intervalsLeft_100(uint256 intervalLength, uint256 expiration) internal view returns(uint256) {
         if (expiration <= block.timestamp) return 0;
         
@@ -364,18 +480,30 @@ contract AccessControlNFT is ERC721Upgradeable, OwnableUpgradeable {
         return timeLeft * PERCENT / intervalLength;
     }
 
-    function _getLatestPrice(AggregatorV3Interface oracle) public view returns(uint256) {
+    function _queryOracle(address oracle) internal view returns(uint256) {
         // if token is MGH (no oracle provider) we calculate based on the Quickswap LP
-        if(address(oracle) == _mghWMaticPair) {
-            (uint112 wmatic_reserve, uint112 mgh_reserve, ) = IUniswapV2Pair(_mghWMaticPair).getReserves();
-            (, int maticPrice,,,) = _currencyData[address(0)].oracle.latestRoundData();
+        if(oracle == _mghWMaticPair) {
+            (uint112 wmaticReserve, uint112 mghReserve, ) = IUniswapV2PairGetReserves(_mghWMaticPair).getReserves();
+            (, int maticPrice,,,) = AggregatorV3Interface(_currencyData[address(0)].oracle).latestRoundData();
             if(maticPrice <= 0) revert("invalid price feed");
             // both tokens have 18 decimals, the 8 oracle decimal places are included in `maticPrice`
-            return uint256(maticPrice) * wmatic_reserve / mgh_reserve;
+            return uint256(maticPrice) * wmaticReserve / mghReserve;
         }
-        (, int price,,,) = oracle.latestRoundData();
+        (, int price,,,) = AggregatorV3Interface(oracle).latestRoundData();
         if(price <= 0) revert("invalid price feed");
+
         return uint256(price);
+    }
+
+    function _referralApplicable(address referrer, uint256 referralBonus) internal view returns(bool) {
+        // referrer != addresss(0) is implied by balanceOf(referrer) != 0;
+        return  balanceOf(referrer) != 0 &&
+                !_isContract(referrer) &&
+                referralBonus > 0;
+    }
+
+    function _isContract(address account) internal view returns(bool) {
+        return account.code.length > 0;
     }
     
     function _beforeTokenTransfer(
@@ -384,9 +512,6 @@ contract AccessControlNFT is ERC721Upgradeable, OwnableUpgradeable {
         uint256 tokenId
     ) internal override {
         super._beforeTokenTransfer(from, to, tokenId);
-
-        if(_isTransferable) return;
-
-        require(from == address(0) || to == address(0), "not transferable at the moment");
+        require(from == address(0) || to == address(0), "not transferable");
     }
 }

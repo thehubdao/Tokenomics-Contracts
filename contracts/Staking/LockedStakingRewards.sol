@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity 0.8.0;
+pragma solidity ^0.8.0;
 
 // We dont use Reentrancy Guard here because we only call the stakeToken contract which is assumed to be non-malicious
 import "@openzeppelin/contracts/access/Ownable.sol";
