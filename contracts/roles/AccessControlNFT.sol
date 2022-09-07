@@ -14,6 +14,7 @@ import "@openzeppelin/contracts/utils/math/Math.sol";
 import "./ERC721Trimmed.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 
+
 contract AccessControlNFT is ERC721TrimmedUpgradeable, OwnableUpgradeable, IAccessControlNFT {
     using SafeERC20 for IERC20;
     using LibRoles for User;

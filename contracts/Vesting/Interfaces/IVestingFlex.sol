@@ -1,7 +1,8 @@
-pragma solidity ^0.8.0;
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0.0;
 
 
-interface IVestingFlex  {   
+interface IVestingFlex  {
 
     event VestingCreated(address indexed who, uint256 indexed which, Vesting vesting);
     event VestingReduced(address indexed who, uint256 indexed which, uint256 amountBefore, uint256 amountAfter);
@@ -38,4 +39,5 @@ interface IVestingFlex  {
     function getNumberOfVestings(address who) external view returns(uint256);
     function getVesting(address who, uint256 which) external view returns(Vesting memory);
     function canAdminRevoke(address who, uint256 which) external view returns(bool);
+    function token() external view returns(address);
 }

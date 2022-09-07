@@ -1,4 +1,4 @@
-pragma solidity 0.8.0;
+pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
@@ -8,7 +8,7 @@ interface ApproveAndCallFallBack {
     function receiveApproval(address _sender, uint256 _amount, address token, bytes memory _data) external;
 }
 
-contract mockMGH is ERC20 {
+contract MGHMock is ERC20 {
 
     function approveAndCall(ApproveAndCallFallBack _spender, uint256 _amount, bytes memory _extraData) public returns (bool success) {
         require(approve(address(_spender), _amount));

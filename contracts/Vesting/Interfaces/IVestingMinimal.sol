@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.0.0;
 
-interface IvestingMinimal {
+interface IVestingMinimal {
 
   function initialize (
     address _token,

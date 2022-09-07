@@ -70,7 +70,7 @@ interface IAccessControlNFT {
         uint40 start;
         uint40 end;
         bytes32 root;
-    }
+    }   
 
     function purchaseRole(
         GiveRoleParams memory params,

@@ -1,6 +1,6 @@
 const { ether, expectRevert, expectEvent, time, BN } = require('@openzeppelin/test-helpers');
 const { MAX_UINT256, ZERO_ADDRESS } = require("@openzeppelin/test-helpers/src/constants");
-const { inTransaction } = require('@openzeppelin/test-helpers/src/expectEvent');
+
 const TUP = artifacts.require("TUP");
 const TUP_ADMIN = artifacts.require("ProxyAdmin");
 const VestingContract = artifacts.require("VestingFlex");

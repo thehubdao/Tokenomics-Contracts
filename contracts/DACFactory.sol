@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity 0.8.0;
+pragma solidity ^0.8.0.0;
 
 import "@openzeppelin/contracts/proxy/Clones.sol";
-import "./Vesting/IvestingMinimal.sol";
-import "./IFO/IFixPriceMinimal.sol";
+import "./vesting/Interfaces/IVestingMinimal.sol";
+import "./sale/Interfaces/IFixPriceMinimal.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
 
@@ -36,7 +36,7 @@ contract DACFactory is Ownable {
     external returns(address clone)
     {
     clone = Clones.clone(vestingImp);
-    IvestingMinimal(clone).initialize(
+    IVestingMinimal(clone).initialize(
       token,
       admin,
       startInDays,

@@ -1,10 +1,11 @@
 pragma solidity ^0.8.0;
 
 
-contract mockAggregatorV3 {
+contract AggregatorV3Mock {
 
   int256 immutable returnValue;
-
+  uint256 public constant decimals = 8;
+  
   constructor(int256 currenyValueCents) {
     returnValue = currenyValueCents * 10 ** 6;
   }  

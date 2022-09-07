@@ -21,3 +21,4 @@ contracts/Staking/LockedStakingRewards.sol
 contracts/TokenManager/TokenManager.sol
 contracts/Vesting/Ivesting.sol
 contracts/Vesting/Vesting.sol
+test/prox.js

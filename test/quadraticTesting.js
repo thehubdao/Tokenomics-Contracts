@@ -2,7 +2,7 @@ const { expectRevert, time, BN } = require('@openzeppelin/test-helpers');
 const { MAX_UINT256 } = require('@openzeppelin/test-helpers/src/constants');
 const assert = require('assert');
 const vest = artifacts.require('DACVesting');
-const ERC20 = artifacts.require('mockERC20');
+const ERC20 = artifacts.require('ERC20Mock');
 
 const duration = 10; // in days
 const startIn = 1;   // in days
