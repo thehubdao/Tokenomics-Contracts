@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.0.0;
 
 import "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -11,10 +11,10 @@ import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
 
-import "@openzeppelin/contracts-upgradeable/token/ERC721/ERC721Upgradeable.sol";
+import "./ERC721Trimmed.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 
-contract AccessControlNFT is ERC721Upgradeable, OwnableUpgradeable, IAccessControlNFT {
+contract AccessControlNFT is ERC721TrimmedUpgradeable, OwnableUpgradeable, IAccessControlNFT {
     using SafeERC20 for IERC20;
     using LibRoles for User;
     using LibRoles for RoleData;
@@ -58,19 +58,22 @@ contract AccessControlNFT is ERC721Upgradeable, OwnableUpgradeable, IAccessContr
         __ERC721_init("MGH_API", "MGH_API");
 
         setupRole(rolesSetupData, enabledTiers, feeByTier);
-        for(uint256 i = 0; i < currencies.length; i = i + 2) {
-            setCurrency(currencies[i], currencies[i+1]);
-        }
+
         setMGHRebate(mghRebate);
         setRevenueSplitter(revenueSplitter);
         setMghPool(mghWMaticPair);
+
+        for(uint256 i = 0; i < currencies.length; i = i + 2) {
+            setCurrency(currencies[i], currencies[i+1]);
+        }
+
     }
 
     function purchaseRole(
         GiveRoleParams memory params,
         address currency,
         bytes memory referralSig
-    ) public payable override {
+    ) public payable override returns(uint256) {
 
         RoleData storage roleData = _roleData[params.roleId];
         User storage user = _user[params.recipient];
@@ -106,7 +109,7 @@ contract AccessControlNFT is ERC721Upgradeable, OwnableUpgradeable, IAccessContr
             }
         }
 
-        // apply rebate for mass purchase and them for paying with MGH in no particular order
+        // apply rebate for mass purchase and then for paying with MGH in no particular order
         // mass purchase rebate
         if(params.intervals > 1 && roleData.rebatePerInterval != 0) {
             uint256 rebatePercentage = Math.min(params.intervals * uint256(roleData.rebatePerInterval), roleData.maxRebate);
@@ -136,13 +139,15 @@ contract AccessControlNFT is ERC721Upgradeable, OwnableUpgradeable, IAccessContr
             }
         } else { require(referralSig.length == 0, "can only use referral for first purchase"); }
 
-        uint256 amountToPayInCurrency = amountToPayInUSD * ORACLE_DECIMALS * (10 ** currencyData.tokenDecimals) / _queryOracle(currencyData.oracle);
+        uint256 amountToPayInCurrency = amountToPayInUSD * ORACLE_DECIMALS * currencyData.tokenDecimals / _queryOracle(currencyData.oracle);
         uint256 referrerAmountInCurrency = referrerShare * amountToPayInCurrency / BASIS_POINTS;
 
-        // process payments separately to avoid stack too deep
+        // process payments separately to avoid stack too deep error
         _processPayment(currency, amountToPayInCurrency, referrerAmountInCurrency, referrer);
 
         _giveRole(params, roleIndex);
+
+        return amountToPayInCurrency;
     }
 
     function claimAirdrop(address recipient, uint256 airdropId, bytes32[] memory proof) external {
@@ -151,7 +156,7 @@ contract AccessControlNFT is ERC721Upgradeable, OwnableUpgradeable, IAccessContr
 
         require(!_airdropClaimed[recipient][airdropId], "airdrop already claimed");
         require(block.timestamp > airdrop.start && block.timestamp < airdrop.end && airdrop.root != bytes32(0), "airdrop not active");
-        if(airdrop.onlyFirstTimeRole) require(user.roleIndex(airdrop.roleId) != type(uint256).max, "only first time role");
+        if(airdrop.onlyFirstTimeRole) require(user.roleIndex(airdrop.roleId) == type(uint256).max, "only first time role");
         if(airdrop.onlyFirstTime)     require(balanceOf(recipient) == 0, "only first time users");
         require(proof.verify(airdrop.root, keccak256(abi.encodePacked(recipient))), "invalid proof");
 
@@ -199,7 +204,7 @@ contract AccessControlNFT is ERC721Upgradeable, OwnableUpgradeable, IAccessContr
         }
         user.userRoleDataArray.pop();
     }
-
+                    
 
     //// OWNER setter functions ////
 
@@ -211,7 +216,7 @@ contract AccessControlNFT is ERC721Upgradeable, OwnableUpgradeable, IAccessContr
         RoleData storage role = _roleData[roleSetup.roleId];
 
         require(role.intervalLength == 0, "already setup");
-        require(roleSetup.intervalLength > 0 && roleSetup.maxIntervalsAtOnce > 0, "non zero param is given as 0");
+        require(roleSetup.intervalLength * roleSetup.maxIntervalsAtOnce > 0, "non zero param is given as 0");
         require(enabledTiers.length == feeByTier.length, "tier fees dont match");
         require(roleSetup.maxRebate <= PERCENT);
 
@@ -280,7 +285,7 @@ contract AccessControlNFT is ERC721Upgradeable, OwnableUpgradeable, IAccessContr
 
     function setCurrency(address currency, address oracle) public onlyOwner {
         require(_queryOracle(oracle) > 0, "oracle contract call failed");
-        require(AggregatorV3Interface(oracle).decimals() == 8, "oracle decimals must be 8");
+        if(oracle != _mghWMaticPair) require(AggregatorV3Interface(oracle).decimals() == 8, "oracle decimals must be 8");
         uint64 tokenDecimals = currency == address(0) ? 18 : IERC20Metadata(currency).decimals();
         _currencyData[currency] = CurrencyData(oracle, uint64(10) ** tokenDecimals);
     }
@@ -399,7 +404,7 @@ contract AccessControlNFT is ERC721Upgradeable, OwnableUpgradeable, IAccessContr
         return _user[account].userRoleDataArray;
     }
 
-    // INTERNALS 
+    // INTERNALS
 
     function _mint(address recipient) internal {
         _mint(recipient, (uint160(recipient)));

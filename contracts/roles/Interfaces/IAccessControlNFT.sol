@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.0.0;
 
 interface IAccessControlNFT {
 
@@ -76,7 +76,7 @@ interface IAccessControlNFT {
         GiveRoleParams memory params,
         address currency,
         bytes memory referralSig
-    ) external payable;
+    ) external payable returns(uint256);
 
     event RoleChanged(address who, bytes32 what);
 /*     //// OWNER ////
